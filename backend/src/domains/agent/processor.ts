@@ -1,0 +1,228 @@
+import type { Pool } from 'pg';
+import { randomUUID } from 'crypto';
+
+type Json = Record<string, any>;
+type Dependencies = { pool: Pool; agentUrl: string; gatewayUrl: string; publish: (type: string, payload: Json) => void };
+const TOOL_NAMES = ['get_recent_messages', 'send_message', 'kick_user', 'finish'] as const;
+const tools = [
+  { name: 'get_recent_messages', description: 'Read recent group messages', input_schema: { type: 'object', required: ['limit'], properties: { limit: { type: 'number' } } } },
+  { name: 'send_message', description: 'Send a group message', input_schema: { type: 'object', required: ['text', 'idempotency_key'], properties: { text: { type: 'string' }, idempotency_key: { type: 'string' } } } },
+  { name: 'kick_user', description: 'Remove a group member', input_schema: { type: 'object', required: ['platform_user_id', 'reason'], properties: { platform_user_id: { type: 'string' }, reason: { type: 'string' } } } },
+  { name: 'finish', description: 'Finish this run', input_schema: { type: 'object', required: ['summary'], properties: { summary: { type: 'string' } } } },
+];
+const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+function isRecord(value: unknown): value is Json { return value !== null && typeof value === 'object' && !Array.isArray(value); }
+function validInput(name: string, input: unknown): input is Json {
+  if (!isRecord(input)) return false;
+  if (name === 'get_recent_messages') return typeof input.limit === 'number' && Number.isFinite(input.limit);
+  if (name === 'send_message') return typeof input.text === 'string' && typeof input.idempotency_key === 'string' && !!input.idempotency_key;
+  if (name === 'kick_user') return typeof input.platform_user_id === 'string' && typeof input.reason === 'string';
+  if (name === 'finish') return typeof input.summary === 'string';
+  return false;
+}
+function boundedContent(value: Json): string {
+  let content = JSON.stringify(value);
+  if (Buffer.byteLength(content) > 8192) content = JSON.stringify({ truncated: true, code: value.code, message: String(value.message || '').slice(0, 500) });
+  return content;
+}
+async function audit(agentUrl: string, text: string, groupId: string): Promise<'pass' | 'fail' | 'blocked'> {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const response = await fetch(`${agentUrl}/agent/audit`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ text, groupId }), signal: AbortSignal.timeout(5000) });
+      const body = await response.json();
+      if (response.ok && isRecord(body) && body.verdict === 'pass') return 'pass';
+      if (response.ok && isRecord(body) && body.verdict === 'fail') return 'fail';
+    } catch { /* Retry an unavailable or invalid audit response. */ }
+  }
+  return 'blocked';
+}
+async function executeTool(dep: Dependencies, run: Json, group: Json, name: string, input: Json, toolUseId: string): Promise<{ result: Json; auditVerdict?: string; blocked?: boolean }> {
+  const { pool, agentUrl, gatewayUrl } = dep;
+  if (name === 'get_recent_messages') {
+    const limit = Math.min(50, Math.max(1, Math.trunc(input.limit)));
+    const messages = await pool.query('SELECT msg_id AS "msgId",sender_platform_user_id AS "senderPlatformUserId",is_own AS "isOwn",text,sent_at AS "sentAt" FROM messages WHERE group_id=$1 ORDER BY sent_at DESC,id DESC LIMIT $2', [run.group_id, limit]);
+    let truncated = false;
+    const list = messages.rows.reverse().map((message: Json) => { if (message.text.length > 500) { message.text = message.text.slice(0, 500); truncated = true; } return message; });
+    return { result: { messages: list, truncated } };
+  }
+  if (name === 'finish') return { result: { ok: true } };
+  if (name === 'send_message') {
+    const existing = await pool.query('SELECT * FROM agent_tool_effects WHERE run_id=$1 AND idempotency_key=$2', [run.id, input.idempotency_key]);
+    if (existing.rowCount) {
+      const effect = existing.rows[0];
+      const deadline = Date.now() + 5000;
+      while (Date.now() < deadline) {
+        const message = await pool.query('SELECT delivery_status,fail_code FROM messages WHERE client_msg_id=$1', [effect.client_msg_id]);
+        const deliveryStatus = message.rows[0]?.delivery_status || effect.status;
+        if (deliveryStatus === 'accepted' || deliveryStatus === 'sent') return { result: { clientMsgId: effect.client_msg_id, deliveryStatus } };
+        if (deliveryStatus === 'failed' || deliveryStatus === 'cancelled') return { result: { code: message.rows[0]?.fail_code === 'GROUP_UNREACHABLE' ? 'GROUP_UNREACHABLE' : 'SEND_FAILED', message: 'Message delivery failed' } };
+        await sleep(100);
+      }
+      return { result: { code: 'SEND_TIMEOUT', message: 'Delivery is still unconfirmed' } };
+    }
+    const verdict = await audit(agentUrl, input.text, group.gateway_group_id);
+    if (verdict === 'blocked') return { result: { code: 'AUDIT_REJECTED', message: 'Audit unavailable' }, auditVerdict: verdict, blocked: true };
+    if (verdict === 'fail') return { result: { code: 'AUDIT_REJECTED', message: 'Audit rejected message' }, auditVerdict: verdict };
+    const account = await pool.query("SELECT m.account_id,m.platform_user_id FROM group_members m JOIN accounts a ON a.id=m.account_id WHERE m.group_id=$1 AND a.status='online' ORDER BY m.account_id LIMIT 1", [run.group_id]);
+    if (!account.rowCount) return { result: { code: 'NO_AVAILABLE_ACCOUNT', message: 'No online group account' }, auditVerdict: verdict };
+    const clientMsgId = randomUUID();
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query("INSERT INTO messages(group_id,client_msg_id,text,sender_platform_user_id,sent_at,delivery_status,is_own,outbound_account_id) VALUES($1,$2,$3,$4,now(),'queued',true,$5)", [run.group_id, clientMsgId, input.text, account.rows[0].platform_user_id, account.rows[0].account_id]);
+      await client.query("INSERT INTO agent_tool_effects(run_id,idempotency_key,tool_name,status,client_msg_id) VALUES($1,$2,'send_message','queued',$3)", [run.id, input.idempotency_key, clientMsgId]);
+      await client.query('COMMIT');
+    } catch (error) { await client.query('ROLLBACK'); throw error; } finally { client.release(); }
+    const deadline = Date.now() + 5000;
+    while (Date.now() < deadline) {
+      const message = await pool.query('SELECT delivery_status,fail_code FROM messages WHERE client_msg_id=$1', [clientMsgId]);
+      const status = message.rows[0].delivery_status;
+      if (status === 'accepted' || status === 'sent') return { result: { clientMsgId, deliveryStatus: status }, auditVerdict: verdict };
+      if (status === 'failed' || status === 'cancelled') return { result: { code: status === 'failed' && message.rows[0].fail_code === 'GROUP_UNREACHABLE' ? 'GROUP_UNREACHABLE' : 'SEND_FAILED', message: 'Message delivery failed' }, auditVerdict: verdict };
+      await sleep(100);
+    }
+    return { result: { code: 'SEND_TIMEOUT', message: 'Delivery is still unconfirmed' }, auditVerdict: verdict };
+  }
+  if (name === 'kick_user') {
+    if (!group.auto_kick_enabled) return { result: { code: 'POLICY_DENIED', message: 'Auto kick is disabled' } };
+    const effectKey = `kick:${toolUseId}`;
+    const previous = await pool.query('SELECT * FROM agent_tool_effects WHERE run_id=$1 AND idempotency_key=$2', [run.id, effectKey]);
+    if (previous.rowCount) {
+      if (previous.rows[0].status === 'done') return { result: { kicked: true } };
+      // A timed-out kick may still complete. The gateway promises convergence within two seconds.
+      await sleep(2500);
+      const current = await fetch(`${gatewayUrl}/groups/${group.gateway_group_id}/members`, { signal: AbortSignal.timeout(5000) });
+      if (!current.ok) throw new Error(`kick reconciliation unavailable: ${current.status}`);
+      const members = await current.json() as { platformUserId: string }[];
+      if (!members.some(member => member.platformUserId === input.platform_user_id)) {
+        await pool.query("UPDATE agent_tool_effects SET status='done',result=$3 WHERE run_id=$1 AND idempotency_key=$2", [run.id, effectKey, { kicked: true }]);
+        return { result: { kicked: true } };
+      }
+    }
+    const verdict = await audit(agentUrl, JSON.stringify({ action: 'kick', platform_user_id: input.platform_user_id, reason: input.reason }), group.gateway_group_id);
+    if (verdict === 'blocked') return { result: { code: 'AUDIT_REJECTED', message: 'Audit unavailable' }, auditVerdict: verdict, blocked: true };
+    if (verdict === 'fail') return { result: { code: 'AUDIT_REJECTED', message: 'Audit rejected kick' }, auditVerdict: verdict };
+    const account = await pool.query("SELECT m.account_id FROM group_members m JOIN accounts a ON a.id=m.account_id WHERE m.group_id=$1 AND m.role IN ('creator','admin') AND a.status='online' ORDER BY (m.role='creator') DESC LIMIT 1", [run.group_id]);
+    if (!account.rowCount) return { result: { code: 'NO_AVAILABLE_ACCOUNT', message: 'No online admin account' }, auditVerdict: verdict };
+    await pool.query("INSERT INTO agent_tool_effects(run_id,idempotency_key,tool_name,status) VALUES($1,$2,'kick_user','pending') ON CONFLICT DO NOTHING", [run.id, effectKey]);
+    const response = await fetch(`${gatewayUrl}/groups/${group.gateway_group_id}/kick`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ byAccountId: account.rows[0].account_id, targetPlatformUserId: input.platform_user_id }) });
+    if (!response.ok) {
+      if (response.status === 504 || response.status === 503) throw new Error(`kick outcome uncertain: ${response.status}`);
+      const body = await response.json().catch(() => ({})) as Json;
+      await pool.query('DELETE FROM agent_tool_effects WHERE run_id=$1 AND idempotency_key=$2', [run.id, effectKey]);
+      return { result: { code: body.code || 'NO_PERMISSION', message: 'Kick failed' }, auditVerdict: verdict };
+    }
+    await pool.query("UPDATE agent_tool_effects SET status='done',result=$3 WHERE run_id=$1 AND idempotency_key=$2", [run.id, effectKey, { kicked: true }]);
+    return { result: { kicked: true }, auditVerdict: verdict };
+  }
+  return { result: { code: 'UNKNOWN_TOOL', message: `Unknown tool ${name}` } };
+}
+
+export function startAgentProcessor(dep: Dependencies): void {
+  const { pool, agentUrl, publish } = dep;
+  const localBusy = new Set<string>();
+  async function startRuns() {
+    const groups = await pool.query("SELECT DISTINCT p.group_id FROM agent_pending_messages p JOIN groups g ON g.id=p.group_id WHERE g.agent_enabled=true AND g.status='active'");
+    for (const row of groups.rows) {
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        await client.query('SELECT id FROM groups WHERE id=$1 FOR UPDATE', [row.group_id]);
+        const active = await client.query("SELECT 1 FROM agent_runs WHERE group_id=$1 AND status='running'", [row.group_id]);
+        if (active.rowCount) { await client.query('COMMIT'); continue; }
+        const pending = await client.query('SELECT * FROM agent_pending_messages WHERE group_id=$1 ORDER BY sent_at,msg_id', [row.group_id]);
+        if (!pending.rowCount) { await client.query('COMMIT'); continue; }
+        const triggers = pending.rows.map((m: Json) => ({ msgId: m.msg_id, senderPlatformUserId: m.sender_platform_user_id, text: m.text, sentAt: m.sent_at }));
+        const run = await client.query("INSERT INTO agent_runs(group_id,status,trigger_messages,history) VALUES($1,'running',$2,'[]') RETURNING id", [row.group_id, JSON.stringify(triggers)]);
+        await client.query('DELETE FROM agent_pending_messages WHERE group_id=$1', [row.group_id]);
+        await client.query('COMMIT');
+        publish('agent_run', { runId: run.rows[0].id, groupId: row.group_id, status: 'running', endReason: null });
+      } catch (error) { await client.query('ROLLBACK'); console.error(JSON.stringify({ event: 'agent_start_failed', groupId: row.group_id, error: String(error) })); }
+      finally { client.release(); }
+    }
+  }
+  async function processOne(id: string) {
+    if (localBusy.has(id)) return;
+    localBusy.add(id);
+    const lock = await pool.connect();
+    let acquired = false;
+    try {
+      const lockResult = await lock.query('SELECT pg_try_advisory_lock(82946,hashtext($1)) AS acquired', [id]);
+      acquired = lockResult.rows[0].acquired;
+      if (!acquired) return;
+      const claim = await pool.query("SELECT * FROM agent_runs WHERE id=$1 AND status='running'", [id]);
+      if (!claim.rowCount) return;
+      const started = Date.now();
+      const run = claim.rows[0] as Json;
+    let status = 'running'; let endReason: string | null = null; let summary: string | null = null;
+    let steps = run.steps as Json[]; let history = run.history as Json[];
+    let protocolErrors = run.protocol_errors as number;
+    try {
+      const groupQuery = await pool.query('SELECT * FROM groups WHERE id=$1', [run.group_id]);
+      const group = groupQuery.rows[0] as Json;
+      if (!group || !group.agent_enabled || group.status !== 'active') { status = 'cancelled'; endReason = 'cancelled'; }
+      else if (steps.length >= 12) { status = 'failed'; endReason = 'budget_exhausted'; }
+      else {
+        if (!history.length) {
+          const own = await pool.query('SELECT platform_user_id FROM group_members WHERE group_id=$1', [run.group_id]);
+          history = [{ role: 'user', content: [{ type: 'text', text: JSON.stringify({ groupId: group.gateway_group_id, triggerMessages: run.trigger_messages, policy: { autoKickEnabled: group.auto_kick_enabled }, ownPlatformUserIds: own.rows.map((a: Json) => a.platform_user_id) }) }] }];
+        }
+        let raw = ''; let response: Json | undefined; let protocolCode: string | null = null;
+        try {
+          const result = await fetch(`${agentUrl}/agent/turn`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ runId: id, tools, messages: history }), signal: AbortSignal.timeout(12000) });
+          raw = await result.text();
+          response = JSON.parse(raw);
+          if (!result.ok || !isRecord(response) || !['tool_use', 'end_turn'].includes(response.stop_reason) || !Array.isArray(response.content) || response.content.length !== 1 || !isRecord(response.content[0]) || response.content[0].type !== (response.stop_reason === 'end_turn' ? 'text' : 'tool_use')) protocolCode = 'BAD_JSON';
+          else if (response.stop_reason === 'end_turn' && typeof response.content[0].text !== 'string') protocolCode = 'BAD_JSON';
+          else if (response.stop_reason === 'tool_use' && (typeof response.content[0].id !== 'string' || !response.content[0].id || typeof response.content[0].name !== 'string' || !isRecord(response.content[0].input))) protocolCode = 'BAD_JSON';
+        } catch (error) { protocolCode = (error as Error).name === 'TimeoutError' ? 'TURN_TIMEOUT' : 'BAD_JSON'; }
+        const block = response?.content?.[0] as Json | undefined;
+        if (!protocolCode && block?.type === 'tool_use' && steps.some(step => step.toolUseId === block.id)) protocolCode = 'DUPLICATE_TOOL_USE_ID';
+        if (protocolCode) {
+          protocolErrors++;
+          steps.push({ kind: 'protocol_error', toolUseId: null, name: null, input: null, resultSummary: protocolCode, isError: true, errorCode: protocolCode, auditVerdict: null, rawResponse: raw.slice(0, 2048) });
+          history.push({ role: 'user', content: [{ type: 'text', text: `PROTOCOL_ERROR ${protocolCode}: Please return one valid tool call or final text.` }] });
+          if (protocolErrors >= 3) { status = 'failed'; endReason = 'protocol_errors'; }
+        } else if (response?.stop_reason === 'end_turn') {
+          protocolErrors = 0; status = 'finished'; endReason = 'final'; summary = block?.text || '';
+          steps.push({ kind: 'final', toolUseId: null, name: null, input: null, resultSummary: (summary || '').slice(0, 200), isError: false, errorCode: null, auditVerdict: null, rawResponse: raw.slice(0, 2048) });
+        } else if (block) {
+          protocolErrors = 0;
+          const name = block.name as string; const input = block.input;
+          let outcome: Awaited<ReturnType<typeof executeTool>>;
+          if (!TOOL_NAMES.includes(name as any)) outcome = { result: { code: 'UNKNOWN_TOOL', message: `Unknown tool ${name}` } };
+          else if (!validInput(name, input)) outcome = { result: { code: 'INVALID_INPUT', message: 'Invalid tool input' } };
+          else outcome = await executeTool(dep, run, group, name, input, block.id);
+          const isError = typeof outcome.result.code === 'string';
+          steps.push({ kind: 'tool_use', toolUseId: block.id, name, input, resultSummary: boundedContent(outcome.result).slice(0, 200), isError, errorCode: isError ? outcome.result.code : null, auditVerdict: outcome.auditVerdict || null, rawResponse: raw.slice(0, 2048) });
+          history.push({ role: 'assistant', content: [block] }, { role: 'user', content: [{ type: 'tool_result', tool_use_id: block.id, is_error: isError, content: boundedContent(outcome.result) }] });
+          if (outcome.blocked) { status = 'blocked'; endReason = 'audit_blocked'; }
+          else if (name === 'finish' && !isError) { status = 'finished'; endReason = 'final'; summary = input.summary; }
+        }
+      }
+      if (status === 'running' && steps.length >= 12) { status = 'failed'; endReason = 'budget_exhausted'; }
+      if (status === 'running') {
+        const latest = await pool.query('SELECT status,agent_enabled FROM groups WHERE id=$1', [run.group_id]);
+        if (!latest.rows[0] || latest.rows[0].status !== 'active' || !latest.rows[0].agent_enabled) { status = 'cancelled'; endReason = 'cancelled'; }
+      }
+      const remainingMs = Math.max(0, Number(run.remaining_ms) - (Date.now() - started));
+      if (status === 'running' && remainingMs === 0) { status = 'failed'; endReason = 'wall_clock'; }
+      await pool.query('UPDATE agent_runs SET status=$2,end_reason=$3,summary=$4,steps=$5,history=$6,protocol_errors=$7,remaining_ms=$8,lease_until=NULL WHERE id=$1', [id, status, endReason, summary, JSON.stringify(steps), JSON.stringify(history), protocolErrors, remainingMs]);
+      if (status !== 'running') publish('agent_run', { runId: id, groupId: run.group_id, status, endReason });
+    } catch (error) { console.error(JSON.stringify({ event: 'agent_step_failed', runId: id, error: String(error) })); }
+    } finally {
+      if (acquired) await lock.query('SELECT pg_advisory_unlock(82946,hashtext($1))', [id]);
+      lock.release();
+      localBusy.delete(id);
+    }
+  }
+  async function tick() {
+    try {
+      await startRuns();
+      const running = await pool.query("SELECT id FROM agent_runs WHERE status='running' ORDER BY created_at LIMIT 20");
+      for (const row of running.rows) void processOne(row.id);
+    } catch (error) { console.error(JSON.stringify({ event: 'agent_tick_failed', error: String(error) })); }
+    setTimeout(tick, 500);
+  }
+  void tick();
+}

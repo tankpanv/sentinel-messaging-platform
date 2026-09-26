@@ -1,0 +1,756 @@
+openapi: 3.0.3
+info:
+  title: Sentinel Messaging Platform API
+  version: 1.0.0
+servers:
+- url: http://127.0.0.1:4000
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+  schemas:
+    ApiError:
+      type: object
+      properties:
+        error:
+          type: object
+          properties:
+            code:
+              type: string
+            message:
+              type: string
+            requestId:
+              type: string
+          required:
+          - code
+          - message
+          - requestId
+      required:
+      - error
+    AccessToken:
+      type: object
+      properties:
+        accessToken:
+          type: string
+      required:
+      - accessToken
+    LoginRequest:
+      type: object
+      properties:
+        username:
+          type: string
+        password:
+          type: string
+      required:
+      - username
+      - password
+    Account:
+      type: object
+      properties:
+        id:
+          type: string
+        status:
+          type: string
+        platformUserId:
+          type: string
+          nullable: true
+        rateLimitedUntil:
+          type: string
+          format: date-time
+          nullable: true
+      required:
+      - id
+      - status
+    TransitionRequest:
+      type: object
+      properties:
+        to:
+          type: string
+        expectedFrom:
+          type: string
+      required:
+      - to
+      - expectedFrom
+    CreateGroupRequest:
+      type: object
+      properties:
+        creatorAccountId:
+          type: string
+        memberAccountIds:
+          type: array
+          items:
+            type: string
+      required:
+      - creatorAccountId
+      - memberAccountIds
+    JobId:
+      type: object
+      properties:
+        jobId:
+          type: string
+      required:
+      - jobId
+    RunId:
+      type: object
+      properties:
+        runId:
+          type: string
+      required:
+      - runId
+    GroupMember:
+      type: object
+      properties:
+        accountId:
+          type: string
+        platformUserId:
+          type: string
+        role:
+          type: string
+      required:
+      - accountId
+      - platformUserId
+      - role
+    Group:
+      type: object
+      properties:
+        id:
+          type: string
+        gatewayGroupId:
+          type: string
+        status:
+          type: string
+        creatorAccountId:
+          type: string
+        agentEnabled:
+          type: boolean
+        autoKickEnabled:
+          type: boolean
+        members:
+          type: array
+          items:
+            $ref: '#/components/schemas/GroupMember'
+        activeSequenceRunId:
+          type: string
+          nullable: true
+        activeAgentRunId:
+          type: string
+          nullable: true
+      required:
+      - id
+      - status
+    GroupPatch:
+      type: object
+      properties:
+        agentEnabled:
+          type: boolean
+        autoKickEnabled:
+          type: boolean
+      required: &id001 []
+    SendRequest:
+      type: object
+      properties:
+        accountId:
+          type: string
+        text:
+          type: string
+      required:
+      - accountId
+      - text
+    SendAccepted:
+      type: object
+      properties:
+        clientMsgId:
+          type: string
+      required:
+      - clientMsgId
+    Job:
+      type: object
+      properties:
+        id:
+          type: string
+        status:
+          type: string
+        errors:
+          type: array
+          items:
+            type: object
+            properties:
+              step:
+                type: string
+              code:
+                type: string
+            required: *id001
+      required:
+      - status
+      - errors
+    Message:
+      type: object
+      properties:
+        id:
+          type: string
+        msgId:
+          type: string
+          nullable: true
+        clientMsgId:
+          type: string
+          nullable: true
+        senderPlatformUserId:
+          type: string
+          nullable: true
+        isOwn:
+          type: boolean
+        text:
+          type: string
+        sentAt:
+          type: string
+          format: date-time
+        deliveryStatus:
+          type: string
+          nullable: true
+        failCode:
+          type: string
+          nullable: true
+        mediaUrl:
+          type: string
+          nullable: true
+        localFilePath:
+          type: string
+          nullable: true
+      required: *id001
+    MessagePage:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Message'
+        nextCursor:
+          type: string
+          nullable: true
+      required:
+      - items
+    AgentStep:
+      type: object
+      properties:
+        kind:
+          type: string
+        toolUseId:
+          type: string
+          nullable: true
+        name:
+          type: string
+          nullable: true
+        input:
+          type: object
+          nullable: true
+        resultSummary:
+          type: string
+        isError:
+          type: boolean
+        errorCode:
+          type: string
+          nullable: true
+        auditVerdict:
+          type: string
+          nullable: true
+        rawResponse:
+          type: string
+      required: *id001
+    AgentRun:
+      type: object
+      properties:
+        id:
+          type: string
+        groupId:
+          type: string
+        status:
+          type: string
+        endReason:
+          type: string
+          nullable: true
+        summary:
+          type: string
+          nullable: true
+        steps:
+          type: array
+          items:
+            $ref: '#/components/schemas/AgentStep'
+        created_at:
+          type: string
+          format: date-time
+      required:
+      - id
+      - status
+    SequenceStepInput:
+      type: object
+      properties:
+        index:
+          type: integer
+        accountRole:
+          type: string
+        text:
+          type: string
+        delaySeconds:
+          type: number
+      required:
+      - index
+      - accountRole
+      - text
+      - delaySeconds
+    SequenceInput:
+      type: object
+      properties:
+        name:
+          type: string
+        steps:
+          type: array
+          items:
+            $ref: '#/components/schemas/SequenceStepInput'
+      required:
+      - name
+      - steps
+    SequenceId:
+      type: object
+      properties:
+        id:
+          type: string
+      required:
+      - id
+    Sequence:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        steps:
+          type: array
+          items:
+            $ref: '#/components/schemas/SequenceStepInput'
+      required:
+      - id
+      - name
+      - steps
+    StartSequence:
+      type: object
+      properties:
+        sequenceId:
+          type: string
+        vars:
+          type: object
+          additionalProperties:
+            type: string
+        stepVars:
+          type: object
+          additionalProperties:
+            type: object
+            additionalProperties:
+              type: string
+      required:
+      - sequenceId
+    SequenceRun:
+      type: object
+      properties:
+        id:
+          type: string
+        status:
+          type: string
+        currentStepIndex:
+          type: integer
+        steps:
+          type: array
+          items:
+            type: object
+      required:
+      - status
+      - currentStepIndex
+      - steps
+    Health:
+      type: object
+      properties:
+        ok:
+          type: boolean
+        schemaVersion:
+          type: string
+      required:
+      - ok
+      - schemaVersion
+security:
+- bearerAuth: []
+paths:
+  /api/health:
+    get:
+      operationId: getHealth
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Health'
+      security: []
+  /api/auth/login:
+    post:
+      operationId: login
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccessToken'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      security: []
+  /api/auth/refresh:
+    post:
+      operationId: refresh
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccessToken'
+      security: []
+  /api/auth/logout:
+    post:
+      operationId: logout
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                required: *id001
+  /api/accounts:
+    get:
+      operationId: listAccounts
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Account'
+  /api/accounts/{id}/connect:
+    post:
+      operationId: connectAccount
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                  platformUserId:
+                    type: string
+                required: *id001
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+  /api/accounts/{id}/transition:
+    post:
+      operationId: transitionAccount
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                required: *id001
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TransitionRequest'
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+  /api/groups:
+    get:
+      operationId: listGroups
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Group'
+    post:
+      operationId: createGroup
+      responses:
+        '202':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JobId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateGroupRequest'
+  /api/groups/{id}:
+    get:
+      operationId: getGroup
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Group'
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+    patch:
+      operationId: patchGroup
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                required: *id001
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GroupPatch'
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+  /api/groups/{id}/send:
+    post:
+      operationId: sendMessage
+      responses:
+        '202':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SendAccepted'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SendRequest'
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+  /api/groups/{id}/leave-all:
+    post:
+      operationId: leaveAll
+      responses:
+        '202':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JobId'
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+  /api/media/{id}:
+    get:
+      operationId: downloadMedia
+      responses:
+        '200':
+          description: Downloaded media
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+  /api/groups/{id}/messages:
+    get:
+      operationId: listMessages
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessagePage'
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: before
+        in: query
+        schema:
+          type: string
+      - name: limit
+        in: query
+        schema:
+          type: integer
+  /api/jobs/{id}:
+    get:
+      operationId: getJob
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Job'
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+  /api/sequences:
+    get:
+      operationId: listSequences
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Sequence'
+    post:
+      operationId: createSequence
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SequenceId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SequenceInput'
+  /api/groups/{id}/sequence-runs:
+    post:
+      operationId: startSequence
+      responses:
+        '201':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RunId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/StartSequence'
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+  /api/sequence-runs/{id}:
+    get:
+      operationId: getSequenceRun
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SequenceRun'
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+  /api/agent-runs/{id}:
+    get:
+      operationId: getAgentRun
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentRun'
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+  /api/groups/{id}/agent-runs:
+    get:
+      operationId: listAgentRuns
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/AgentRun'
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string

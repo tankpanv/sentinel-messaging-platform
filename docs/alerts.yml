@@ -1,0 +1,28 @@
+groups:
+  - name: sentinel-platform
+    rules:
+      - alert: SentinelApiHighErrorRate
+        expr: sum(rate(sentinel_http_requests_total{status=~"5.."}[5m])) / clamp_min(sum(rate(sentinel_http_requests_total[5m])), 1) > 0.05
+        for: 5m
+        labels: { severity: warning }
+        annotations: { summary: "Sentinel API 5xx ratio exceeds 5%" }
+      - alert: SentinelUnknownOutboundStuck
+        expr: sentinel_oldest_unknown_seconds > 10
+        for: 2m
+        labels: { severity: critical }
+        annotations: { summary: "Outbound message remains unknown beyond reconciliation window" }
+      - alert: SentinelGatewayEventGap
+        expr: sentinel_gateway_cursor_gap > 0
+        for: 2m
+        labels: { severity: warning }
+        annotations: { summary: "Gateway events have not reached contiguous cursor" }
+      - alert: SentinelGatewayStreamDisconnected
+        expr: sentinel_gateway_sse_connected == 0
+        for: 2m
+        labels: { severity: warning }
+        annotations: { summary: "Gateway event stream remains disconnected" }
+      - alert: SentinelApiDown
+        expr: up{job="sentinel-backend"} == 0
+        for: 1m
+        labels: { severity: critical }
+        annotations: { summary: "Sentinel Backend metrics endpoint is unavailable" }

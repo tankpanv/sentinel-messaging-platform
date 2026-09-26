@@ -1,0 +1,8 @@
+node_modules/
+dist/
+.env
+*.log
+media/
+gateway-service/data/
+agent-service/data/
+frontend/.vite/
