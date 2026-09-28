@@ -399,7 +399,7 @@ app.post('/groups/:id/join', (req, res) => {
   if (!group || !account || !invite) return error(res, 404, 'NOT_FOUND');
   if (invites.get(req.body.inviteLink)?.link !== invite.link || invite.groupId && invite.groupId !== group.id) return error(res, 404, 'NOT_FOUND');
   if (Date.now() >= invite.expiresAt) return error(res, 410, 'INVITE_EXPIRED');
-  if (Date.now() < invite.readyAt) return error(res, 409, 'INVITE_NOT_READY');
+  if (Date.now() < invite.readyAt) return error(res, 409, 'INVITE_NOT_READY', { readyAfterMs: invite.readyAt - Date.now() });
   const statusError = accountStatusError(res, account); if (statusError) return statusError;
   if (group.members.has(platformId(account))) return error(res, 409, 'ALREADY_MEMBER');
   if (req.body.neverArrive === true) return res.status(202).json({ accepted: true });

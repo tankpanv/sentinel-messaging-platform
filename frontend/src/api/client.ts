@@ -21,11 +21,24 @@ const fetchWithRefresh: typeof fetch = async (input, init) => {
   if (requestUrl.origin !== window.location.origin || !requestUrl.pathname.startsWith('/api/')) {
     throw new Error('控制台仅允许通过同源 Backend API 访问服务');
   }
+  // Keep a replayable copy for the 401 retry and remember which credential the
+  // failed request actually used. Another parallel request may already have
+  // rotated the session by the time this 401 arrives.
+  const requestInput = input instanceof Request ? input.clone() : input;
+  const requestHeaders = new Headers(requestInput instanceof Request ? requestInput.headers : undefined);
+  new Headers(init?.headers).forEach((value, name) => requestHeaders.set(name, value));
+  const attemptedToken = requestHeaders.get('authorization')?.replace(/^Bearer\s+/i, '') || null;
   const options = { ...init, credentials: 'include' as RequestCredentials };
-  let response = await fetch(input, options);
-  if (response.status === 401 && session && !String(input).includes('/api/auth/')) {
-    const fresh = await renew();
-    if (fresh) { const headers = new Headers(options.headers); headers.set('Authorization', `Bearer ${fresh}`); response = await fetch(input, { ...options, headers }); }
+  let response = await fetch(requestInput, options);
+  if (response.status === 401 && session && !requestUrl.pathname.startsWith('/api/auth/')) {
+    // If a sibling request already renewed this token, reuse that access token
+    // instead of rotating the HttpOnly cookie a second time.
+    const fresh = session.token !== attemptedToken ? session.token : await renew();
+    if (fresh) {
+      const headers = new Headers(options.headers);
+      headers.set('Authorization', `Bearer ${fresh}`);
+      response = await fetch(requestInput instanceof Request ? requestInput.clone() : requestInput, { ...options, headers });
+    }
   }
   return response;
 };

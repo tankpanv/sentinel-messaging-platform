@@ -152,28 +152,53 @@ export function startGroupJobs({ pool, gatewayUrl, publish }: Dependencies): voi
     await finish(job, errors);
   }
   async function leaveAll(job: Job) {
-    const group = await pool.query('SELECT gateway_group_id FROM groups WHERE id=$1', [job.group_id]);
+    const group = await pool.query('SELECT gateway_group_id,creator_account_id FROM groups WHERE id=$1', [job.group_id]);
     if (!group.rowCount) { await finish(job, [{ step: 'create', code: 'GROUP_NOT_FOUND' }]); return; }
     const gatewayId = group.rows[0].gateway_group_id;
-    const local = await pool.query('SELECT account_id,platform_user_id,role FROM group_members WHERE group_id=$1 ORDER BY (role=\'creator\'),account_id', [job.group_id]);
-    const nonOwners = local.rows.filter(row => row.role !== 'creator');
+    const creatorAccountId = group.rows[0].creator_account_id;
+    const local = await pool.query('SELECT account_id,platform_user_id,role FROM group_members WHERE group_id=$1', [job.group_id]);
+    const initialRemote = await gateway(gatewayUrl, `/groups/${gatewayId}/members`, 'GET', undefined, job.trace_id);
+    if (!initialRemote.response.ok || !Array.isArray(initialRemote.data)) throw new Error('member lookup unavailable');
+    const remoteByPlatform = new Map<string, { platformUserId: string; role?: string }>(initialRemote.data.map((member: { platformUserId: string; role?: string }) => [member.platformUserId, member]));
+    const remoteManaged = await pool.query('SELECT id AS account_id,platform_user_id FROM accounts WHERE platform_user_id=ANY($1::text[])', [[...remoteByPlatform.keys()]]);
+    const candidates = new Map<string, { account_id: string; platform_user_id: string; role: string }>();
+    for (const row of local.rows) if (row.account_id !== creatorAccountId) candidates.set(row.account_id, row);
+    for (const row of remoteManaged.rows) {
+      if (row.account_id === creatorAccountId || !row.platform_user_id) continue;
+      const remoteRole = remoteByPlatform.get(row.platform_user_id)?.role;
+      candidates.set(row.account_id, { ...row, role: remoteRole === 'admin' ? 'admin' : 'member' });
+    }
+    const nonOwners = [...candidates.values()].sort((a, b) => a.account_id.localeCompare(b.account_id));
     const errors: { step: string; code: string }[] = job.progress.errors || [];
     const processed = new Set(job.progress.processed || []);
     for (const member of nonOwners) {
       if (processed.has(member.account_id)) continue;
       const result = await gateway(gatewayUrl, `/groups/${gatewayId}/leave`, 'POST', { accountId: member.account_id }, job.trace_id);
       const stillMember = (await members(gatewayId, job.trace_id)).includes(member.platform_user_id);
-      if (stillMember) errors.push({ step: `leave:${member.account_id}`, code: result.data.code || 'LEAVE_FAILED' });
+      if (stillMember) {
+        await pool.query('INSERT INTO group_members(group_id,account_id,platform_user_id,role) VALUES($1,$2,$3,$4) ON CONFLICT(group_id,account_id) DO UPDATE SET platform_user_id=EXCLUDED.platform_user_id', [job.group_id, member.account_id, member.platform_user_id, member.role || 'member']);
+        errors.push({ step: `leave:${member.account_id}`, code: result.data.code || 'LEAVE_FAILED' });
+      }
       else await pool.query('DELETE FROM group_members WHERE group_id=$1 AND account_id=$2', [job.group_id, member.account_id]);
       processed.add(member.account_id); job.progress = { ...job.progress, processed: [...processed], errors }; await saveProgress(job);
     }
     if (!errors.length) {
-      const owner = local.rows.find(row => row.role === 'creator');
-      if (owner) {
-        await gateway(gatewayUrl, `/groups/${gatewayId}/leave`, 'POST', { accountId: owner.account_id }, job.trace_id);
-        if ((await members(gatewayId, job.trace_id)).includes(owner.platform_user_id)) errors.push({ step: `leave:${owner.account_id}`, code: 'LEAVE_FAILED' });
-        else await pool.query('DELETE FROM group_members WHERE group_id=$1 AND account_id=$2', [job.group_id, owner.account_id]);
+      const owner = await pool.query('SELECT id AS account_id,platform_user_id FROM accounts WHERE id=$1', [creatorAccountId]);
+      if (owner.rowCount && (await members(gatewayId, job.trace_id)).includes(owner.rows[0].platform_user_id)) {
+        await gateway(gatewayUrl, `/groups/${gatewayId}/leave`, 'POST', { accountId: owner.rows[0].account_id }, job.trace_id);
+        if ((await members(gatewayId, job.trace_id)).includes(owner.rows[0].platform_user_id)) errors.push({ step: `leave:${creatorAccountId}`, code: 'LEAVE_FAILED' });
       }
+    }
+    // Reconcile all service-account rows against Gateway after the leave pass.
+    // This also repairs pre-existing drift and preserves rows for failed leaves.
+    const finalRemote = await gateway(gatewayUrl, `/groups/${gatewayId}/members`, 'GET', undefined, job.trace_id);
+    if (!finalRemote.response.ok || !Array.isArray(finalRemote.data)) throw new Error('member lookup unavailable');
+    const finalIds = finalRemote.data.map((member: { platformUserId: string }) => member.platformUserId);
+    await pool.query('DELETE FROM group_members WHERE group_id=$1 AND NOT (platform_user_id=ANY($2::text[]))', [job.group_id, finalIds]);
+    const finalManaged = await pool.query('SELECT id,platform_user_id FROM accounts WHERE platform_user_id=ANY($1::text[])', [finalIds]);
+    const roles = new Map<string, string>(finalRemote.data.map((member: { platformUserId: string; role?: string }) => [member.platformUserId, member.role === 'creator' ? 'creator' : member.role === 'admin' ? 'admin' : 'member']));
+    for (const account of finalManaged.rows) {
+      await pool.query('INSERT INTO group_members(group_id,account_id,platform_user_id,role) VALUES($1,$2,$3,$4) ON CONFLICT(group_id,account_id) DO UPDATE SET platform_user_id=EXCLUDED.platform_user_id,role=EXCLUDED.role', [job.group_id, account.id, account.platform_user_id, roles.get(account.platform_user_id) || 'member']);
     }
     if (!errors.length) await pool.query("UPDATE groups SET status='left' WHERE id=$1", [job.group_id]);
     await finish(job, errors);
