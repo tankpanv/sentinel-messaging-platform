@@ -114,11 +114,17 @@ try {
   for (const id of ['acc-1', 'acc-2', 'acc-3']) await expectOk(`/api/accounts/${id}/connect`, 'POST');
 
   const { jobId } = await expectOk('/api/groups', 'POST', { creatorAccountId: 'acc-1', memberAccountIds: ['acc-2', 'acc-3'] });
-  const creationJob = await until(() => expectOk(`/api/jobs/${jobId}`), job => ['finished', 'failed'].includes(job.status));
+  const observedCreateSteps = new Set();
+  const creationJob = await until(async () => {
+    const current = await expectOk(`/api/jobs/${jobId}`);
+    if (current.progress?.step) observedCreateSteps.add(current.progress.step);
+    return current;
+  }, job => ['finished', 'failed'].includes(job.status));
   assert.equal(creationJob.status, 'finished', `group creation job failed: ${JSON.stringify(creationJob.errors)}`);
   assert.equal(creationJob.progress.step, 'complete');
   assert.deepEqual(creationJob.progress.completedMemberAccountIds.sort(), ['acc-2', 'acc-3']);
   assert.deepEqual(creationJob.errors, []);
+  assert(['invite', 'join', 'await_member_joined', 'promote'].some(step => observedCreateSteps.has(step)), `GET /api/jobs/:id exposed no intermediate A3 progress: ${[...observedCreateSteps]}`);
   const group = (await expectOk('/api/groups')).find(g => g.members?.some(m => m.accountId === 'acc-3') && g.status === 'active');
   assert(group, 'created group appears in list');
   const detail = await expectOk(`/api/groups/${group.id}`);
@@ -127,6 +133,16 @@ try {
   assert.equal(detail.members.find(m => m.accountId === 'acc-3').role, 'member');
   const gatewayGroupMembers = await expectOk(`/groups/${group.gatewayGroupId}/members`, 'GET', undefined, gateway);
   assert.equal(gatewayGroupMembers.find(member => member.platformUserId === detail.members.find(m => m.accountId === 'acc-2').platformUserId).role, 'admin');
+  await stop(gatewayProcess);
+  const failedCreate = await expectOk('/api/groups', 'POST', { creatorAccountId: 'acc-1', memberAccountIds: ['acc-2'] });
+  const failedCreateJob = await until(() => expectOk(`/api/jobs/${failedCreate.jobId}`), job => job.status === 'failed', 10000);
+  assert.equal(failedCreateJob.progress.step, 'failed');
+  assert.equal(failedCreateJob.progress.retryCount, 5);
+  assert.equal(failedCreateJob.progress.lastFailure.step, 'create');
+  assert.equal(failedCreateJob.progress.lastFailure.code, 'GATEWAY_UNAVAILABLE');
+  assert.deepEqual(failedCreateJob.errors, [{ step: 'create', code: 'GATEWAY_UNAVAILABLE' }]);
+  gatewayProcess = launch('gateway-service', ports.gateway, { GATEWAY_STATE_FILE: gatewayStateFile, GATEWAY_MEDIA_DIR: gatewayMediaDirectory, INVITE_READY_AFTER_MS: '500' });
+  await waitFor(`${gateway}/health`);
   await expectOk('/api/accounts/acc-5/connect', 'POST');
   const competingTransitions = await Promise.all([
     request('/api/accounts/acc-5/transition', 'POST', { to: 'disconnected', expectedFrom: 'online' }),

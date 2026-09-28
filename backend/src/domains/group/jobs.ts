@@ -88,18 +88,17 @@ export function startGroupJobs({ pool, gatewayUrl, publish }: Dependencies): voi
       const local = await pool.query('SELECT 1 FROM group_members WHERE group_id=$1 AND account_id=$2', [groupId, accountId]);
       if (local.rowCount) { completed.add(accountId); continue; }
       let accepted = false;
-      let alreadyMember = false;
       let joinFailed = false;
       let lastJoinCode = 'JOIN_FAILED';
       for (let inviteTry = 0; inviteTry < 2 && !accepted; inviteTry++) {
-        await setStep(job, 'invite', { currentAccountId: accountId, inviteAttempts: inviteTry + 1, completedMemberAccountIds: [...completed] } as Partial<JobProgress>);
+        await setStep(job, 'invite', { currentAccountId: accountId, inviteAttempts: inviteTry + 1, completedMemberAccountIds: [...completed] });
         const invite = await gateway(gatewayUrl, `/groups/${gatewayId}/invite`, 'POST', undefined, job.trace_id);
         if (!invite.response.ok) { await recordFailure(job, errors, `invite:${accountId}`, invite.data.code || 'INVITE_FAILED'); break; }
         await sleep(Math.max(0, Number(invite.data.readyAfterMs || 0)) + 25);
         for (let attempt = 0; attempt < 2 && !accepted; attempt++) {
           await setStep(job, 'join', { currentAccountId: accountId, inviteAttempts: inviteTry + 1, completedMemberAccountIds: [...completed] });
           const join = await gateway(gatewayUrl, `/groups/${gatewayId}/join`, 'POST', { accountId, inviteLink: invite.data.inviteLink }, job.trace_id);
-          if (join.response.ok || join.data.code === 'ALREADY_MEMBER') { accepted = true; alreadyMember = join.data.code === 'ALREADY_MEMBER'; break; }
+          if (join.response.ok || join.data.code === 'ALREADY_MEMBER') { accepted = true; break; }
           if (join.data.code === 'INVITE_EXPIRED') { lastJoinCode = 'INVITE_EXPIRED'; break; }
           if (join.data.code === 'INVITE_NOT_READY') { lastJoinCode = 'INVITE_NOT_READY'; await sleep(Math.max(25, Number(join.data.readyAfterMs) || 0) + 25); continue; }
           lastJoinCode = join.data.code || 'JOIN_FAILED';
@@ -108,21 +107,6 @@ export function startGroupJobs({ pool, gatewayUrl, publish }: Dependencies): voi
         if (joinFailed) break;
       }
       if (!accepted) { if (!errors.some(error => error.step === `join:${accountId}` || error.step === `invite:${accountId}`)) await recordFailure(job, errors, `join:${accountId}`, lastJoinCode); continue; }
-      if (alreadyMember) {
-        // ALREADY_MEMBER does not emit a fresh member_joined event. Confirm the
-        // authoritative Gateway state and repair the local row immediately so
-        // the normal promotion phase can proceed without waiting for a signal
-        // that will never arrive.
-        const remote = await gateway(gatewayUrl, `/groups/${gatewayId}/members`, 'GET', undefined, job.trace_id);
-        if (!remote.response.ok || !Array.isArray(remote.data)) throw new Error('member lookup unavailable');
-        const found = remote.data.find((item: { platformUserId?: string }) => item.platformUserId === platformUserId);
-        if (!found) { await recordFailure(job, errors, `join:${accountId}`, 'ALREADY_MEMBER_NOT_CONFIRMED'); continue; }
-        const role = found.role === 'admin' ? 'admin' : 'member';
-        await pool.query('INSERT INTO group_members(group_id,account_id,platform_user_id,role) VALUES($1,$2,$3,$4) ON CONFLICT(group_id,account_id) DO UPDATE SET platform_user_id=EXCLUDED.platform_user_id', [groupId, accountId, platformUserId, role]);
-        completed.add(accountId);
-        await setStep(job, 'join', { currentAccountId: undefined, completedMemberAccountIds: [...completed] });
-        continue;
-      }
       await setStep(job, 'await_member_joined', { currentAccountId: accountId, completedMemberAccountIds: [...completed] });
       const deadline = Date.now() + 10000;
       let eventReceived = false;
