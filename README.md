@@ -2,16 +2,16 @@
 
 多账号群组消息平台。`backend` 是 Node.js/TypeScript/PostgreSQL API 与后台任务；`gateway-service` 是模拟外部 HTTP/SSE 消息网关的独立服务；`agent-service` 是遵守工具调用协议的独立决策服务；`frontend` 是 React 18/TypeScript/shadcn/ui 控制台。业务服务在本机作为独立进程运行，直接连接 PostgreSQL。
 
-当前仓库启动的 Gateway 是**本仓库模拟器**。页面上创建的用户、以及测试里注入的 `external-*` 消息，只验证模拟协议链路，不能当作真实外部平台接入证据。默认 Agent 为 `AGENT_PROVIDER=mock`。结论须遵守 [AGENTS.md](AGENTS.md)。
+当前仓库启动的 Gateway 是根据文档api实现 遵守 [AGENTS.md](AGENTS.md)。
 
 ## 环境要求
 
-| 依赖 | 用途 |
-| --- | --- |
-| Node.js 22+、npm | 安装并运行四个业务服务 |
-| Docker | 一键启动 PostgreSQL 16 容器（推荐） |
+| 依赖                         | 用途                                                |
+| ---------------------------- | --------------------------------------------------- |
+| Node.js 22+、npm             | 安装并运行四个业务服务                              |
+| Docker                       | 一键启动 PostgreSQL 16 容器（推荐）                 |
 | `psql` / PostgreSQL 客户端 | 仅在使用本机已有 PostgreSQL、或跑部分集成测试时需要 |
-| Chromium（Playwright） | 仅跑浏览器 E2E / C3 测试时需要 |
+| Chromium（Playwright）       | 仅跑浏览器 E2E / C3 测试时需要                      |
 
 可选：`ss` 或 `lsof`（`scripts/dev-local.sh` 用来检测/清理端口占用）。
 
@@ -80,13 +80,13 @@ bash scripts/start-postgres.sh
 
 常用覆盖（写在 `.env` 或命令前导出）：
 
-| 变量 | 默认 | 含义 |
-| --- | --- | --- |
-| `POSTGRES_CONTAINER_NAME` | `sentinel-postgres-local` | 容器名 |
-| `POSTGRES_PORT` | `5432` | 宿主端口 |
-| `POSTGRES_ADMIN_USER` / `POSTGRES_ADMIN_PASSWORD` | `postgres` / `postgres` | 容器超级用户 |
-| `POSTGRES_DB` / `POSTGRES_APP_USER` / `POSTGRES_APP_PASSWORD` | `sentinel` | 应用库与账号 |
-| `POSTGRES_VOLUME` | `sentinel-postgres-data` | 数据卷 |
+| 变量                                                                | 默认                        | 含义         |
+| ------------------------------------------------------------------- | --------------------------- | ------------ |
+| `POSTGRES_CONTAINER_NAME`                                         | `sentinel-postgres-local` | 容器名       |
+| `POSTGRES_PORT`                                                   | `5432`                    | 宿主端口     |
+| `POSTGRES_ADMIN_USER` / `POSTGRES_ADMIN_PASSWORD`               | `postgres` / `postgres` | 容器超级用户 |
+| `POSTGRES_DB` / `POSTGRES_APP_USER` / `POSTGRES_APP_PASSWORD` | `sentinel`                | 应用库与账号 |
+| `POSTGRES_VOLUME`                                                 | `sentinel-postgres-data`  | 数据卷       |
 
 默认连接串：
 
@@ -152,12 +152,12 @@ bash scripts/dev-local.sh restart    # stop + start
 
 默认端口（可用环境变量或 `.env` 覆盖）：
 
-| 服务 | 变量 | 默认端口 | 健康检查 / 入口 |
-| --- | --- | --- | --- |
-| Frontend | `FRONTEND_PORT` | `25173` | `http://127.0.0.1:25173/` |
-| Backend | `BACKEND_PORT`（或 `PORT`） | `28080` | `http://127.0.0.1:28080/api/health` |
-| Gateway 模拟器 | `GATEWAY_PORT` | `28081` | `http://127.0.0.1:28081/health` |
-| Agent | `AGENT_PORT` | `28082` | `http://127.0.0.1:28082/health` |
+| 服务           | 变量                            | 默认端口  | 健康检查 / 入口                       |
+| -------------- | ------------------------------- | --------- | ------------------------------------- |
+| Frontend       | `FRONTEND_PORT`               | `25173` | `http://127.0.0.1:25173/`           |
+| Backend        | `BACKEND_PORT`（或 `PORT`） | `28080` | `http://127.0.0.1:28080/api/health` |
+| Gateway 模拟器 | `GATEWAY_PORT`                | `28081` | `http://127.0.0.1:28081/health`     |
+| Agent          | `AGENT_PORT`                  | `28082` | `http://127.0.0.1:28082/health`     |
 
 相关 URL 变量：`GATEWAY_URL`、`AGENT_URL`、`VITE_BACKEND_URL`、`VITE_GATEWAY_URL`。一键脚本还会设置 `ENABLE_GATEWAY_SIMULATION=true`、`AGENT_PROVIDER=mock`（除非你已在环境中覆盖）。
 
@@ -188,20 +188,20 @@ bash scripts/smoke-local.sh
 
 ## 如何访问服务
 
-| 用途 | 地址 |
-| --- | --- |
-| 控制台（日常操作） | http://127.0.0.1:25173 |
-| Backend API | http://127.0.0.1:28080/api |
-| Backend 健康检查 | http://127.0.0.1:28080/api/health |
-| Prometheus 指标 | http://127.0.0.1:28080/api/metrics |
-| Gateway 模拟器 | http://127.0.0.1:28081 |
-| Agent | http://127.0.0.1:28082 |
+| 用途               | 地址                               |
+| ------------------ | ---------------------------------- |
+| 控制台（日常操作） | http://127.0.0.1:25173             |
+| Backend API        | http://127.0.0.1:28080/api         |
+| Backend 健康检查   | http://127.0.0.1:28080/api/health  |
+| Prometheus 指标    | http://127.0.0.1:28080/api/metrics |
+| Gateway 模拟器     | http://127.0.0.1:28081             |
+| Agent              | http://127.0.0.1:28082             |
 
 演示登录（仅本地）：
 
-| 用户 | 密码 | 权限 |
-| --- | --- | --- |
-| `admin` | `admin` | 读写 |
+| 用户       | 密码       | 权限 |
+| ---------- | ---------- | ---- |
+| `admin`  | `admin`  | 读写 |
 | `viewer` | `viewer` | 只读 |
 
 正式环境必须替换用户凭据与 `JWT_SECRET`。Gateway 模拟器的 `/admin/*` **没有鉴权**，只允许隔离开发环境，不要暴露到公网。
@@ -321,17 +321,17 @@ npm run test:c3:report
 
 报告在 `test-results/c3-agent-run/html/index.html`。
 
-| 范围 | 执行脚本 | 查看结果 |
-| --- | --- | --- |
-| 构建 | `npm run build` | 终端退出码与四服务构建输出 |
-| Backend 单元测试 | `npm --prefix backend test` | 终端 TAP |
-| 前端访问边界 | `npm run check:boundary` | 终端逐项结论 |
-| 模拟 Gateway 合同 | `bash tests/gateway/contract-cases.sh` | curl 状态与响应 |
-| mock Agent 合同与故障链路 | `npm run test:agent` | run 状态、步骤、审计、错误码 |
-| Backend 模拟服务集成 | `npm run integration` | 终端断言 |
-| 综合 Playwright E2E | `npm run e2e` | 终端断言；截图在 `/tmp/*-e2e.png` |
-| C3 Playwright E2E | `npm run test:c3` | `npm run test:c3:report` |
-| 全部合同、集成与浏览器用例 | `npm run test:all` | 终端按组显示；C3 另有 HTML 报告 |
+| 范围                       | 执行脚本                                 | 查看结果                           |
+| -------------------------- | ---------------------------------------- | ---------------------------------- |
+| 构建                       | `npm run build`                        | 终端退出码与四服务构建输出         |
+| Backend 单元测试           | `npm --prefix backend test`            | 终端 TAP                           |
+| 前端访问边界               | `npm run check:boundary`               | 终端逐项结论                       |
+| 模拟 Gateway 合同          | `bash tests/gateway/contract-cases.sh` | curl 状态与响应                    |
+| mock Agent 合同与故障链路  | `npm run test:agent`                   | run 状态、步骤、审计、错误码       |
+| Backend 模拟服务集成       | `npm run integration`                  | 终端断言                           |
+| 综合 Playwright E2E        | `npm run e2e`                          | 终端断言；截图在`/tmp/*-e2e.png` |
+| C3 Playwright E2E          | `npm run test:c3`                      | `npm run test:c3:report`         |
+| 全部合同、集成与浏览器用例 | `npm run test:all`                     | 终端按组显示；C3 另有 HTML 报告    |
 
 更细入口见 [tests/README.md](tests/README.md) 和 [测试矩阵](docs/test-strategy.md)。CI 见 `.github/workflows/ci.yml`。
 
@@ -341,10 +341,10 @@ npm run test:c3:report
 
 配置分两层：
 
-| 文件 | 谁读取 | 用途 |
-| --- | --- | --- |
-| 仓库根目录 `.env` | `scripts/dev-local.sh`、`start-postgres.sh`、`setup-local-db.sh`、`migrate-local.sh`；一键启动时导出给四个子进程 | 日常本地开发的主配置 |
-| `agent-service/.env` | Agent 进程启动时 `process.loadEnvFile`（文件存在才加载） | Agent 专用，尤其是 LLM 密钥。**不会覆盖进程里已经存在的同名变量** |
+| 文件                   | 谁读取                                                                                                                   | 用途                                                                    |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------- |
+| 仓库根目录`.env`     | `scripts/dev-local.sh`、`start-postgres.sh`、`setup-local-db.sh`、`migrate-local.sh`；一键启动时导出给四个子进程 | 日常本地开发的主配置                                                    |
+| `agent-service/.env` | Agent 进程启动时`process.loadEnvFile`（文件存在才加载）                                                                | Agent 专用，尤其是 LLM 密钥。**不会覆盖进程里已经存在的同名变量** |
 
 一键启动会先 `source` 根目录 `.env`，再套默认值并 `export`。因此根目录里的 `AGENT_PROVIDER=mock` 会进入 Agent 进程；此时即使 `agent-service/.env` 写了 `anthropic`，也**不会**盖过 mock。要用真实模型，请把 `AGENT_PROVIDER` 和密钥写在**根目录 `.env`**，或在执行 `npm run dev` 前 `export`。单独 `cd agent-service && npm run dev` 时才会主要依赖 `agent-service/.env`。
 
@@ -356,61 +356,61 @@ npm run test:c3:report
 
 **进程端口与互访 URL**（改端口时这些要一起改）
 
-| 变量 | 一键默认 | 谁用 |
-| --- | --- | --- |
-| `BACKEND_PORT` / `PORT` | `28080` | Backend 监听；脚本优先 `BACKEND_PORT`，否则用 `PORT` |
-| `GATEWAY_PORT` | `28081` | Gateway 监听（脚本把该值赋给 Gateway 进程的 `PORT`） |
-| `AGENT_PORT` | `28082` | Agent 监听（同上） |
-| `FRONTEND_PORT` | `25173` | Vite 开发服务器 |
-| `DATABASE_URL` | `postgresql://sentinel:sentinel@127.0.0.1:5432/sentinel` | Backend 与迁移 |
-| `GATEWAY_URL` | `http://127.0.0.1:28081` | Backend 调网关 |
-| `AGENT_URL` | `http://127.0.0.1:28082` | Backend 调 Agent `/agent/turn`、`/agent/audit` |
-| `VITE_BACKEND_URL` | `http://127.0.0.1:28080` | 前端把 `/api`、`/ws` 代理到 Backend |
-| `VITE_GATEWAY_URL` | 空 | 浏览器直连 Gateway；空则用当前页主机 + `VITE_GATEWAY_PORT` |
-| `VITE_GATEWAY_PORT` | `28081` | 未设 `VITE_GATEWAY_URL` 时拼 Gateway 源 |
-| `CORS_ORIGINS` | `http://127.0.0.1:25173,http://localhost:25173` | Backend 允许的控制台 Origin（逗号分隔） |
-| `JWT_SECRET` | 本地演示值 | 签发会话；`NODE_ENV=production` 时至少 32 字符 |
-| `ENABLE_GATEWAY_SIMULATION` | `true`（一键脚本） | 为 `true` 时开放 Backend 测试用模拟外部成员接口 |
-| `AGENT_PROVIDER` | `mock`（一键脚本） | 传给 Agent 进程；见下一节 |
+| 变量                          | 一键默认                                                   | 谁用                                                        |
+| ----------------------------- | ---------------------------------------------------------- | ----------------------------------------------------------- |
+| `BACKEND_PORT` / `PORT`   | `28080`                                                  | Backend 监听；脚本优先`BACKEND_PORT`，否则用 `PORT`     |
+| `GATEWAY_PORT`              | `28081`                                                  | Gateway 监听（脚本把该值赋给 Gateway 进程的`PORT`）       |
+| `AGENT_PORT`                | `28082`                                                  | Agent 监听（同上）                                          |
+| `FRONTEND_PORT`             | `25173`                                                  | Vite 开发服务器                                             |
+| `DATABASE_URL`              | `postgresql://sentinel:sentinel@127.0.0.1:5432/sentinel` | Backend 与迁移                                              |
+| `GATEWAY_URL`               | `http://127.0.0.1:28081`                                 | Backend 调网关                                              |
+| `AGENT_URL`                 | `http://127.0.0.1:28082`                                 | Backend 调 Agent`/agent/turn`、`/agent/audit`           |
+| `VITE_BACKEND_URL`          | `http://127.0.0.1:28080`                                 | 前端把`/api`、`/ws` 代理到 Backend                      |
+| `VITE_GATEWAY_URL`          | 空                                                         | 浏览器直连 Gateway；空则用当前页主机 +`VITE_GATEWAY_PORT` |
+| `VITE_GATEWAY_PORT`         | `28081`                                                  | 未设`VITE_GATEWAY_URL` 时拼 Gateway 源                    |
+| `CORS_ORIGINS`              | `http://127.0.0.1:25173,http://localhost:25173`          | Backend 允许的控制台 Origin（逗号分隔）                     |
+| `JWT_SECRET`                | 本地演示值                                                 | 签发会话；`NODE_ENV=production` 时至少 32 字符            |
+| `ENABLE_GATEWAY_SIMULATION` | `true`（一键脚本）                                       | 为`true` 时开放 Backend 测试用模拟外部成员接口            |
+| `AGENT_PROVIDER`            | `mock`（一键脚本）                                       | 传给 Agent 进程；见下一节                                   |
 
 **Backend 自身**
 
-| 变量 | 默认 | 含义 |
-| --- | --- | --- |
-| `MEDIA_DIR` | `./media` | 从 Gateway 下载后的本地媒体目录 |
-| `MEDIA_RETENTION_DAYS` | `30` | Backend 媒体保留天数；运行中 Agent Run 引用的文件延迟清理 |
-| `MEDIA_MAX_BYTES` | `10485760` | 下载大小上限 |
-| `MEDIA_DOWNLOAD_MAX_ATTEMPTS` | `5` | 下载重试次数 |
-| `AGENT_TURN_TIMEOUT_MS` | `15000`（限制在 10000–15000） | Backend 等待单轮 `/agent/turn` 的超时 |
-| `NODE_ENV` | 未设 | `production` 时收紧 JWT、Cookie `secure`、错误堆栈 |
+| 变量                            | 默认                             | 含义                                                      |
+| ------------------------------- | -------------------------------- | --------------------------------------------------------- |
+| `MEDIA_DIR`                   | `./media`                      | 从 Gateway 下载后的本地媒体目录                           |
+| `MEDIA_RETENTION_DAYS`        | `30`                           | Backend 媒体保留天数；运行中 Agent Run 引用的文件延迟清理 |
+| `MEDIA_MAX_BYTES`             | `10485760`                     | 下载大小上限                                              |
+| `MEDIA_DOWNLOAD_MAX_ATTEMPTS` | `5`                            | 下载重试次数                                              |
+| `AGENT_TURN_TIMEOUT_MS`       | `15000`（限制在 10000–15000） | Backend 等待单轮`/agent/turn` 的超时                    |
+| `NODE_ENV`                    | 未设                             | `production` 时收紧 JWT、Cookie `secure`、错误堆栈    |
 
 **Gateway 模拟器**（一键启动时脚本还会设 `HOST=0.0.0.0`、`GATEWAY_STATE_FILE=.../gateway-service/data/state.json`）
 
-| 变量 | 默认 | 含义 |
-| --- | --- | --- |
-| `PORT` | 单独跑时 `4001`；一键为 `GATEWAY_PORT` | 监听端口 |
-| `HOST` | `127.0.0.1`；一键为 `0.0.0.0` | 绑定地址 |
-| `GATEWAY_STATE_FILE` | `gateway-service/data/state.json` | 用户/群/事件持久化 |
-| `GATEWAY_MEDIA_DIR` | `./media_gateway` | 上传文件目录 |
-| `GATEWAY_MEDIA_MAX_BYTES` | `10485760` | 上传大小上限 |
-| `GATEWAY_MEDIA_RETENTION_DAYS` | `30` | Gateway 侧文件保留天数 |
-| `GATEWAY_PUBLIC_URL` | `http://127.0.0.1:$PORT` | 写入消息里的媒体 URL，须浏览器可访问且与 Backend 的 `GATEWAY_URL` 同源 |
-| `INVITE_READY_AFTER_MS` | `0` | 邀请链接可用延迟 |
-| `INVITE_TTL_MS` | `60000` | 邀请过期 |
-| `JOIN_DELAY_MS` | `100` | 入群事件延迟 |
-| `KICK_DELAY_MS` | `0` | 踢人事件延迟 |
-| `SEND_EVENT_DELAY_MS` | `100` | `message_sent` 事件延迟 |
-| `SEND_RESPONSE_DELAY_MS` | `0` | 发送 HTTP 响应额外延迟 |
+| 变量                             | 默认                                      | 含义                                                                    |
+| -------------------------------- | ----------------------------------------- | ----------------------------------------------------------------------- |
+| `PORT`                         | 单独跑时`4001`；一键为 `GATEWAY_PORT` | 监听端口                                                                |
+| `HOST`                         | `127.0.0.1`；一键为 `0.0.0.0`         | 绑定地址                                                                |
+| `GATEWAY_STATE_FILE`           | `gateway-service/data/state.json`       | 用户/群/事件持久化                                                      |
+| `GATEWAY_MEDIA_DIR`            | `./media_gateway`                       | 上传文件目录                                                            |
+| `GATEWAY_MEDIA_MAX_BYTES`      | `10485760`                              | 上传大小上限                                                            |
+| `GATEWAY_MEDIA_RETENTION_DAYS` | `30`                                    | Gateway 侧文件保留天数                                                  |
+| `GATEWAY_PUBLIC_URL`           | `http://127.0.0.1:$PORT`                | 写入消息里的媒体 URL，须浏览器可访问且与 Backend 的`GATEWAY_URL` 同源 |
+| `INVITE_READY_AFTER_MS`        | `0`                                     | 邀请链接可用延迟                                                        |
+| `INVITE_TTL_MS`                | `60000`                                 | 邀请过期                                                                |
+| `JOIN_DELAY_MS`                | `100`                                   | 入群事件延迟                                                            |
+| `KICK_DELAY_MS`                | `0`                                     | 踢人事件延迟                                                            |
+| `SEND_EVENT_DELAY_MS`          | `100`                                   | `message_sent` 事件延迟                                               |
+| `SEND_RESPONSE_DELAY_MS`       | `0`                                     | 发送 HTTP 响应额外延迟                                                  |
 
 `/admin/*` 为故障注入（超时、503、重放事件等），无鉴权，仅隔离开发环境。
 
 **Frontend（Vite，构建期/dev 注入）**
 
-| 变量 | 默认 | 含义 |
-| --- | --- | --- |
-| `FRONTEND_PORT` | 单独跑 Vite 时 `5173`；一键 `25173` | 开发服务器端口 |
-| `VITE_BACKEND_URL` | 代码默认 `http://127.0.0.1:4000` | 代理目标，须与 Backend 一致 |
-| `VITE_GATEWAY_URL` / `VITE_GATEWAY_PORT` | 见上 | 仅「Gateway 消息服务」页直连模拟器 |
+| 变量                                         | 默认                                   | 含义                               |
+| -------------------------------------------- | -------------------------------------- | ---------------------------------- |
+| `FRONTEND_PORT`                            | 单独跑 Vite 时`5173`；一键 `25173` | 开发服务器端口                     |
+| `VITE_BACKEND_URL`                         | 代码默认`http://127.0.0.1:4000`      | 代理目标，须与 Backend 一致        |
+| `VITE_GATEWAY_URL` / `VITE_GATEWAY_PORT` | 见上                                   | 仅「Gateway 消息服务」页直连模拟器 |
 
 **PostgreSQL 脚本专用**（`start-postgres.sh` / `setup-local-db.sh`）
 
@@ -418,12 +418,12 @@ npm run test:c3:report
 
 **可观测性（四个 Node 服务共用，由 `scripts/otel.mjs` 预载）**
 
-| 变量 | 含义 |
-| --- | --- |
-| `NODE_OPTIONS=--import=.../scripts/otel.mjs` | 一键脚本已加；独立跑 `node dist` 时需自己设 |
-| `OTEL_SERVICE_NAME` | 一键分别为 `sentinel-backend` / `sentinel-gateway` / `sentinel-agent` |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | 如 `http://127.0.0.1:4318`；不设则只打日志、不导出 traces |
-| `OTEL_SDK_DISABLED=true` | 关闭 SDK |
+| 变量                                           | 含义                                                                       |
+| ---------------------------------------------- | -------------------------------------------------------------------------- |
+| `NODE_OPTIONS=--import=.../scripts/otel.mjs` | 一键脚本已加；独立跑`node dist` 时需自己设                               |
+| `OTEL_SERVICE_NAME`                          | 一键分别为`sentinel-backend` / `sentinel-gateway` / `sentinel-agent` |
+| `OTEL_EXPORTER_OTLP_ENDPOINT`                | 如`http://127.0.0.1:4318`；不设则只打日志、不导出 traces                 |
+| `OTEL_SDK_DISABLED=true`                     | 关闭 SDK                                                                   |
 
 媒体目录面向单实例；多实例需共享对象存储。
 
@@ -433,10 +433,10 @@ npm run test:c3:report
 
 **切换 provider**
 
-| `AGENT_PROVIDER` | 行为 |
-| --- | --- |
-| 未设或非 `anthropic` | mock：确定性工具序列，用于本地与 CI |
-| `anthropic` | 把同一套 tools/messages 转发到 Anthropic 兼容的 Messages API |
+| `AGENT_PROVIDER`    | 行为                                                         |
+| --------------------- | ------------------------------------------------------------ |
+| 未设或非`anthropic` | mock：确定性工具序列，用于本地与 CI                          |
+| `anthropic`         | 把同一套 tools/messages 转发到 Anthropic 兼容的 Messages API |
 
 `anthropic` 模式需要有效密钥、模型名和出网。它仍走同一工具协议；**不能**据此宣称「生产 LLM 已验收」，除非你用真实密钥跑通并单独记录证据。
 
@@ -466,19 +466,19 @@ ANTHROPIC_API_KEY=
 
 鉴权规则（`agent-service/src/anthropic.ts`）：`ANTHROPIC_AUTH_TOKEN` 或目标主机为 `openrouter.ai` 时发 `Authorization: Bearer`；否则用 `ANTHROPIC_API_KEY` 发 `x-api-key`。`ANTHROPIC_MODEL` 与 `ANTHROPIC_API_MODEL` 任一即可。缺 token 或 model 会抛错，Backend 收到 `MODEL_UNAVAILABLE`。
 
-| 变量 | 默认 | 含义 |
-| --- | --- | --- |
-| `PORT` | 单独跑 `4002`；一键 `AGENT_PORT` | 监听端口 |
-| `AGENT_PROVIDER` | mock | `anthropic` 才调外部模型 |
-| `AGENT_SESSION_FILE` | `agent-service/data/sessions.json` | runId ↔ context 哈希，防同 run 换上下文 |
-| `ANTHROPIC_API_KEY` | 空 | 官方 Anthropic `x-api-key` |
-| `ANTHROPIC_AUTH_TOKEN` | 空 | Bearer token（OpenRouter 等） |
-| `ANTHROPIC_MODEL` / `ANTHROPIC_API_MODEL` | 空 | 模型 ID |
-| `ANTHROPIC_BASE_URL` | `https://api.anthropic.com` | 可写到 `/v1/messages` 的完整 URL，或仅 origin |
-| `ANTHROPIC_MAX_TOKENS` | `512`（至少 128） | 模型输出上限 |
-| `AGENT_MODEL_TIMEOUT_MS` | `14000`（限制 1000–14500） | 调模型 HTTP 超时 |
-| `ENABLE_FAULT_INJECTION` | 未设 | `true` 时 turn 前额外等待，供故障测试 |
-| `AGENT_TURN_DELAY_MS` | `0` | 上述注入延迟毫秒 |
+| 变量                                          | 默认                                 | 含义                                           |
+| --------------------------------------------- | ------------------------------------ | ---------------------------------------------- |
+| `PORT`                                      | 单独跑`4002`；一键 `AGENT_PORT`  | 监听端口                                       |
+| `AGENT_PROVIDER`                            | mock                                 | `anthropic` 才调外部模型                     |
+| `AGENT_SESSION_FILE`                        | `agent-service/data/sessions.json` | runId ↔ context 哈希，防同 run 换上下文       |
+| `ANTHROPIC_API_KEY`                         | 空                                   | 官方 Anthropic`x-api-key`                    |
+| `ANTHROPIC_AUTH_TOKEN`                      | 空                                   | Bearer token（OpenRouter 等）                  |
+| `ANTHROPIC_MODEL` / `ANTHROPIC_API_MODEL` | 空                                   | 模型 ID                                        |
+| `ANTHROPIC_BASE_URL`                        | `https://api.anthropic.com`        | 可写到`/v1/messages` 的完整 URL，或仅 origin |
+| `ANTHROPIC_MAX_TOKENS`                      | `512`（至少 128）                  | 模型输出上限                                   |
+| `AGENT_MODEL_TIMEOUT_MS`                    | `14000`（限制 1000–14500）        | 调模型 HTTP 超时                               |
+| `ENABLE_FAULT_INJECTION`                    | 未设                                 | `true` 时 turn 前额外等待，供故障测试        |
+| `AGENT_TURN_DELAY_MS`                       | `0`                                | 上述注入延迟毫秒                               |
 
 协议约束（mock 与 anthropic 相同）：必须一次提供四个工具 `get_recent_messages`、`send_message`、`kick_user`、`finish`；每轮只返回一个 `tool_use` 或最终文本。Backend 限制约 12 步、约 60 秒有效运行时间。审计 fail 则不会真正发消息或踢人。
 
@@ -510,18 +510,18 @@ sentinel-messaging-platform/
 
 Node/Express，入口 `backend/src/index.ts`。连接 `DATABASE_URL`，消费 Gateway SSE，驱动 outbox/建群 job/入群申请/序列/Agent/媒体 worker，向浏览器推 WS。
 
-| 路径 | 职责 |
-| --- | --- |
-| `src/domains/auth` | 登录登出、JWT、admin/viewer、写操作中间件 |
-| `src/domains/account` | 账号 CRUD、连接网关、状态机（`state.ts` CAS + 终态副作用） |
-| `src/domains/group` | 群 API、成员、邀请、Agent/自动踢人开关；`jobs.ts` 建群；`joinRequests.ts` 审批后入群 |
-| `src/domains/message` | `outbox.ts` 发送与对账；`media.ts` 下载 Gateway 文件、过期清理、`/api/media` |
-| `src/domains/sequence` | 模板与运行 API；`prepare.ts` 预检变量；`worker.ts` 按真实送达排期 |
-| `src/domains/agent` | `processor.ts` 排队、单群单 run、turn/审计/工具副作用；`context.ts` 拼给 Agent 的上下文 |
-| `src/infrastructure/db` | 连接池、`schema.sql` 迁移、`SCHEMA_VERSION`（当前 `1.8.0`） |
-| `src/infrastructure/events` | Gateway SSE 游标、去重、失败重试 |
-| `src/infrastructure/realtime` | `/ws` 与 `sinceSeq` 补发 |
-| `src/infrastructure/observability` | Prometheus、`trace_events` |
+| 路径                                 | 职责                                                                                        |
+| ------------------------------------ | ------------------------------------------------------------------------------------------- |
+| `src/domains/auth`                 | 登录登出、JWT、admin/viewer、写操作中间件                                                   |
+| `src/domains/account`              | 账号 CRUD、连接网关、状态机（`state.ts` CAS + 终态副作用）                                |
+| `src/domains/group`                | 群 API、成员、邀请、Agent/自动踢人开关；`jobs.ts` 建群；`joinRequests.ts` 审批后入群    |
+| `src/domains/message`              | `outbox.ts` 发送与对账；`media.ts` 下载 Gateway 文件、过期清理、`/api/media`          |
+| `src/domains/sequence`             | 模板与运行 API；`prepare.ts` 预检变量；`worker.ts` 按真实送达排期                       |
+| `src/domains/agent`                | `processor.ts` 排队、单群单 run、turn/审计/工具副作用；`context.ts` 拼给 Agent 的上下文 |
+| `src/infrastructure/db`            | 连接池、`schema.sql` 迁移、`SCHEMA_VERSION`（当前 `1.8.0`）                           |
+| `src/infrastructure/events`        | Gateway SSE 游标、去重、失败重试                                                            |
+| `src/infrastructure/realtime`      | `/ws` 与 `sinceSeq` 补发                                                                |
+| `src/infrastructure/observability` | Prometheus、`trace_events`                                                                |
 
 本地：`npm --prefix backend run dev`（tsx watch）。构建：`npm --prefix backend run build` 后 `npm start`。
 
@@ -531,11 +531,11 @@ Node/Express，入口 `backend/src/index.ts`。连接 `DATABASE_URL`，消费 Ga
 
 ### `agent-service/`
 
-| 文件 | 职责 |
-| --- | --- |
-| `src/index.ts` | `/agent/turn`、`/agent/audit`、`/health`；校验工具 schema；mock 决策；会话持久化 |
-| `src/anthropic.ts` | `AGENT_PROVIDER=anthropic` 时转发 Messages API |
-| `.env` / `.env.example` | 见上一节 |
+| 文件                        | 职责                                                                                   |
+| --------------------------- | -------------------------------------------------------------------------------------- |
+| `src/index.ts`            | `/agent/turn`、`/agent/audit`、`/health`；校验工具 schema；mock 决策；会话持久化 |
+| `src/anthropic.ts`        | `AGENT_PROVIDER=anthropic` 时转发 Messages API                                       |
+| `.env` / `.env.example` | 见上一节                                                                               |
 
 不连 PostgreSQL。限制与审计在 Backend 执行。
 
@@ -543,32 +543,32 @@ Node/Express，入口 `backend/src/index.ts`。连接 `DATABASE_URL`，消费 Ga
 
 Vite + React 18。平台客户端 `src/api/client.ts`（OpenAPI 生成代码）只打同源 `/api` 与 `/ws`。`src/api/gateway.ts` 仅管理页用。
 
-| 组件 / 入口 | 对应功能 |
-| --- | --- |
-| `src/main.tsx` | 登录、侧栏路由、账号页、群组工作台、Agent 详情 |
-| `components/GroupCreation.tsx` | 选在线账号建群并轮询 job |
-| `components/MessageTimeline.tsx` | Backend 消息时间线 |
-| `components/MessageServiceLive.tsx` | Gateway 会话 |
-| `components/GatewayUsers.tsx` | Gateway 用户 |
-| `components/SequencePanel.tsx` | 序列模板与运行 |
-| `hooks/useEvents.ts` | WebSocket 业务事件 |
-| `src/generated/` | `npm run api:generate` 产物，勿手改 |
+| 组件 / 入口                           | 对应功能                                       |
+| ------------------------------------- | ---------------------------------------------- |
+| `src/main.tsx`                      | 登录、侧栏路由、账号页、群组工作台、Agent 详情 |
+| `components/GroupCreation.tsx`      | 选在线账号建群并轮询 job                       |
+| `components/MessageTimeline.tsx`    | Backend 消息时间线                             |
+| `components/MessageServiceLive.tsx` | Gateway 会话                                   |
+| `components/GatewayUsers.tsx`       | Gateway 用户                                   |
+| `components/SequencePanel.tsx`      | 序列模板与运行                                 |
+| `hooks/useEvents.ts`                | WebSocket 业务事件                             |
+| `src/generated/`                    | `npm run api:generate` 产物，勿手改          |
 
 ### 其它目录
 
-| 路径 | 职责 |
-| --- | --- |
-| `scripts/dev-local.sh` | 一键 start/stop/restart/status |
-| `scripts/start-postgres.sh` | Docker PostgreSQL + 迁移 |
-| `scripts/setup-local-db.sh` | 本机 PostgreSQL 建库 |
-| `scripts/migrate-local.sh` | 只跑迁移（`npm run migrate`） |
-| `scripts/otel.mjs` | Node OTEL 预载 |
-| `scripts/integration-local.mjs` / `e2e-local.mjs` | 隔离 schema 的集成与浏览器测试 |
-| `scripts/check-frontend-boundary.mjs` | 平台代码不得直连 Gateway |
-| `openapi/` | 平台 API 唯一契约源 |
-| `tests/` | 分层用例，见 [tests/README.md](tests/README.md) |
-| `docs/` | 架构与设计；协作约定见 [docs/ai-development.md](docs/ai-development.md) |
-| `AGENTS.md` | 测试证据边界（模拟 vs 真实外部） |
+| 路径                                                  | 职责                                                                  |
+| ----------------------------------------------------- | --------------------------------------------------------------------- |
+| `scripts/dev-local.sh`                              | 一键 start/stop/restart/status                                        |
+| `scripts/start-postgres.sh`                         | Docker PostgreSQL + 迁移                                              |
+| `scripts/setup-local-db.sh`                         | 本机 PostgreSQL 建库                                                  |
+| `scripts/migrate-local.sh`                          | 只跑迁移（`npm run migrate`）                                       |
+| `scripts/otel.mjs`                                  | Node OTEL 预载                                                        |
+| `scripts/integration-local.mjs` / `e2e-local.mjs` | 隔离 schema 的集成与浏览器测试                                        |
+| `scripts/check-frontend-boundary.mjs`               | 平台代码不得直连 Gateway                                              |
+| `openapi/`                                          | 平台 API 唯一契约源                                                   |
+| `tests/`                                            | 分层用例，见[tests/README.md](tests/README.md)                         |
+| `docs/`                                             | 架构与设计；协作约定见[docs/ai-development.md](docs/ai-development.md) |
+| `AGENTS.md`                                         | 测试证据边界（模拟 vs 真实外部）                                      |
 
 ## 文档
 
