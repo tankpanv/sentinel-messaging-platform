@@ -9,6 +9,7 @@ Name | Type
 `sequenceId` | string
 `vars` | { [key: string]: string; }
 `stepVars` | { [key: string]: { [key: string]: string; }; }
+`stepAccountIds` | { [key: string]: string; }
 
 ## Example
 
@@ -20,6 +21,7 @@ const example = {
   "sequenceId": null,
   "vars": null,
   "stepVars": null,
+  "stepAccountIds": null,
 } satisfies StartSequence
 
 console.log(example)

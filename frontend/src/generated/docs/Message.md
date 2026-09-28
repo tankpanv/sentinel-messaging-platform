@@ -15,8 +15,8 @@ Name | Type
 `sentAt` | string
 `deliveryStatus` | string
 `failCode` | string
-`mediaUrl` | string
 `localFilePath` | string
+`media` | [MessageMedia](MessageMedia.md)
 
 ## Example
 
@@ -34,8 +34,8 @@ const example = {
   "sentAt": null,
   "deliveryStatus": null,
   "failCode": null,
-  "mediaUrl": null,
   "localFilePath": null,
+  "media": null,
 } satisfies Message
 
 console.log(example)

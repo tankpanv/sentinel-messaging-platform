@@ -7,6 +7,7 @@
 Name | Type
 ------------ | -------------
 `id` | string
+`displayName` | string
 `status` | string
 `platformUserId` | string
 `rateLimitedUntil` | string
@@ -19,6 +20,7 @@ import type { Account } from ''
 // TODO: Update the object below with actual values
 const example = {
   "id": null,
+  "displayName": null,
   "status": null,
   "platformUserId": null,
   "rateLimitedUntil": null,

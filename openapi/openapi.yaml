@@ -3,7 +3,7 @@ info:
   title: Sentinel Messaging Platform API
   version: 1.0.0
 servers:
-- url: http://127.0.0.1:4000
+- url: /
 components:
   securitySchemes:
     bearerAuth:
@@ -50,6 +50,9 @@ components:
       properties:
         id:
           type: string
+        displayName:
+          type: string
+          nullable: true
         status:
           type: string
         platformUserId:
@@ -111,6 +114,32 @@ components:
       - accountId
       - platformUserId
       - role
+    GatewayGroupMember:
+      type: object
+      properties:
+        id:
+          type: string
+        accountId:
+          type: string
+          nullable: true
+        platformUserId:
+          type: string
+        displayName:
+          type: string
+        role:
+          type: string
+          enum: [creator, admin, member]
+        managed:
+          type: boolean
+        status:
+          type: string
+          nullable: true
+      required:
+      - id
+      - platformUserId
+      - displayName
+      - role
+      - managed
     Group:
       type: object
       properties:
@@ -130,6 +159,14 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/GroupMember'
+        gatewayMembers:
+          type: array
+          description: Gateway 当前完整成员快照，包含平台托管账号和其他 Gateway 用户
+          items:
+            $ref: '#/components/schemas/GatewayGroupMember'
+        gatewayMembersSynced:
+          type: boolean
+          description: 本次响应是否成功从 Gateway 读取当前成员
         activeSequenceRunId:
           type: string
           nullable: true
@@ -147,6 +184,85 @@ components:
         autoKickEnabled:
           type: boolean
       required: &id001 []
+    InviteResponse:
+      type: object
+      properties:
+        inviteLink:
+          type: string
+        readyAfterMs:
+          type: integer
+      required:
+      - inviteLink
+      - readyAfterMs
+    JoinRequest:
+      type: object
+      properties:
+        accountId:
+          type: string
+        inviteLink:
+          type: string
+      required:
+      - accountId
+      - inviteLink
+    JoinAccepted:
+      type: object
+      properties:
+        accepted:
+          type: boolean
+      required:
+      - accepted
+    CreateJoinRequest:
+      type: object
+      properties:
+        accountId:
+          type: string
+      required:
+      - accountId
+    GroupJoinRequest:
+      type: object
+      properties:
+        id:
+          type: string
+        groupId:
+          type: string
+        accountId:
+          type: string
+        status:
+          type: string
+          enum: [pending, approved, joined, rejected, failed]
+        errorCode:
+          type: string
+          nullable: true
+        requestedAt:
+          type: string
+          format: date-time
+        decidedAt:
+          type: string
+          format: date-time
+          nullable: true
+      required:
+      - id
+      - groupId
+      - accountId
+      - status
+      - requestedAt
+    KickResponse:
+      type: object
+      properties:
+        kicked:
+          type: boolean
+      required:
+      - kicked
+    PromoteRequest:
+      type: object
+      properties:
+        byAccountId:
+          type: string
+        accountId:
+          type: string
+      required:
+      - byAccountId
+      - accountId
     SendRequest:
       type: object
       properties:
@@ -184,6 +300,28 @@ components:
       required:
       - status
       - errors
+    MessageMedia:
+      type: object
+      properties:
+        fileName:
+          type: string
+          nullable: true
+        contentType:
+          type: string
+          nullable: true
+        size:
+          type: integer
+          format: int64
+          nullable: true
+        status:
+          type: string
+          nullable: true
+        sourceUrl:
+          type: string
+          nullable: true
+        localUrl:
+          type: string
+          nullable: true
     Message:
       type: object
       properties:
@@ -211,11 +349,12 @@ components:
         failCode:
           type: string
           nullable: true
-        mediaUrl:
-          type: string
-          nullable: true
         localFilePath:
           type: string
+          nullable: true
+        media:
+          allOf:
+          - $ref: '#/components/schemas/MessageMedia'
           nullable: true
       required: *id001
     MessagePage:
@@ -276,7 +415,10 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/AgentStep'
-        created_at:
+        traceId:
+          type: string
+          nullable: true
+        createdAt:
           type: string
           format: date-time
       required:
@@ -289,6 +431,9 @@ components:
           type: integer
         accountRole:
           type: string
+        senderAccountId:
+          type: string
+          description: Optional service account ID; when omitted the sender is selected by accountRole.
         text:
           type: string
         delaySeconds:
@@ -347,25 +492,158 @@ components:
             type: object
             additionalProperties:
               type: string
+        stepAccountIds:
+          type: object
+          description: Optional sender override by one-based step index; an empty string restores automatic role selection.
+          additionalProperties:
+            type: string
       required:
       - sequenceId
+    SequencePreviewInput:
+      type: object
+      properties:
+        steps:
+          type: array
+          items:
+            $ref: '#/components/schemas/SequenceStepInput'
+        vars:
+          type: object
+          additionalProperties:
+            type: string
+        stepVars:
+          type: object
+          additionalProperties:
+            type: object
+            additionalProperties:
+              type: string
+        stepAccountIds:
+          type: object
+          additionalProperties:
+            type: string
+      required:
+      - steps
+    SequencePreview:
+      type: object
+      properties:
+        steps:
+          type: array
+          items:
+            type: object
+            properties:
+              index:
+                type: integer
+              accountRole:
+                type: string
+              senderAccountId:
+                type: string
+              text:
+                type: string
+              delaySeconds:
+                type: number
+              resolvedVars:
+                type: object
+                additionalProperties:
+                  type: string
+              varSources:
+                type: object
+                additionalProperties:
+                  type: string
+      required:
+      - steps
     SequenceRun:
       type: object
       properties:
         id:
           type: string
+        groupId:
+          type: string
+        sequenceId:
+          type: string
         status:
           type: string
+          enum: [running, finished, failed, stopped]
         currentStepIndex:
           type: integer
         steps:
           type: array
           items:
-            type: object
+            $ref: '#/components/schemas/SequenceRunStep'
+        createdAt:
+          type: string
+          format: date-time
       required:
       - status
       - currentStepIndex
       - steps
+    SequenceRunPage:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/SequenceRun'
+        nextCursor:
+          type: string
+          nullable: true
+      required:
+      - items
+    ActiveSequenceRun:
+      type: object
+      properties:
+        run:
+          nullable: true
+          allOf:
+          - $ref: '#/components/schemas/SequenceRun'
+      required:
+      - run
+    SequenceRunStep:
+      type: object
+      properties:
+        index:
+          type: integer
+        status:
+          type: string
+          enum: [pending, accepted, sent, skipped, failed]
+        text:
+          type: string
+        accountRole:
+          type: string
+          enum: [admin, member]
+        senderAccountId:
+          type: string
+          description: Requested sender account ID; absent means automatic role selection.
+        accountId:
+          type: string
+          nullable: true
+        scheduledAt:
+          type: string
+          format: date-time
+          nullable: true
+        sentAt:
+          type: string
+          format: date-time
+          nullable: true
+        clientMsgId:
+          type: string
+          nullable: true
+        resolvedVars:
+          type: object
+          additionalProperties:
+            type: string
+        varSources:
+          type: object
+          additionalProperties:
+            type: string
+      required:
+      - index
+      - status
+      - text
+      - accountRole
+      - scheduledAt
+      - sentAt
+      - clientMsgId
+      - resolvedVars
+      - varSources
     Health:
       type: object
       properties:
@@ -376,6 +654,43 @@ components:
       required:
       - ok
       - schemaVersion
+    TraceEvent:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int64
+        traceId:
+          type: string
+        service:
+          type: string
+        eventType:
+          type: string
+        payload:
+          type: object
+        createdAt:
+          type: string
+          format: date-time
+      required:
+      - traceId
+      - service
+      - eventType
+      - payload
+    TraceResponse:
+      type: object
+      properties:
+        traceId:
+          type: string
+        events:
+          type: array
+          items:
+            $ref: '#/components/schemas/TraceEvent'
+        truncated:
+          type: boolean
+      required:
+      - traceId
+      - events
+      - truncated
 security:
 - bearerAuth: []
 paths:
@@ -390,6 +705,22 @@ paths:
               schema:
                 $ref: '#/components/schemas/Health'
       security: []
+  /api/traces/{traceId}:
+    get:
+      operationId: getTrace
+      parameters:
+      - name: traceId
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Trace event chain
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TraceResponse'
   /api/auth/login:
     post:
       operationId: login
@@ -444,6 +775,75 @@ paths:
                 type: array
                 items:
                   $ref: '#/components/schemas/Account'
+    post:
+      operationId: createAccount
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [id]
+              properties:
+                id:
+                  type: string
+                displayName:
+                  type: string
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Account'
+  /api/accounts/{id}:
+    parameters:
+    - name: id
+      in: path
+      required: true
+      schema:
+        type: string
+    get:
+      operationId: getAccount
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Account'
+    patch:
+      operationId: updateAccount
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [displayName]
+              properties:
+                displayName:
+                  type: string
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Account'
+    delete:
+      operationId: deleteAccount
+      responses:
+        '200':
+          description: Deleted
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [deleted]
+                properties:
+                  deleted:
+                    type: boolean
   /api/accounts/{id}/connect:
     post:
       operationId: connectAccount
@@ -554,6 +954,196 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/GroupPatch'
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+  /api/groups/{id}/members/invite:
+    post:
+      operationId: inviteGroupMember
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InviteResponse'
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+  /api/groups/{id}/join-requests:
+    get:
+      operationId: listGroupJoinRequests
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Group join requests
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/GroupJoinRequest'
+    post:
+      operationId: createGroupJoinRequest
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateJoinRequest'
+      responses:
+        '201':
+          description: Submitted for operator approval
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GroupJoinRequest'
+  /api/groups/{id}/join-requests/{requestId}/approve:
+    post:
+      operationId: approveGroupJoinRequest
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: requestId
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Approved; gateway join starts asynchronously
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GroupJoinRequest'
+  /api/groups/{id}/join-requests/{requestId}/reject:
+    post:
+      operationId: rejectGroupJoinRequest
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: requestId
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Rejected without contacting the gateway
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GroupJoinRequest'
+  /api/groups/{id}/members/join:
+    post:
+      operationId: joinGroupMember
+      responses:
+        '202':
+          description: Accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JoinAccepted'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/JoinRequest'
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+  /api/groups/{id}/members/promote:
+    post:
+      operationId: promoteGroupMember
+      responses:
+        '200':
+          description: OK
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PromoteRequest'
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+  /api/groups/{id}/members/kick:
+    post:
+      operationId: kickGroupMember
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/KickResponse'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                byAccountId:
+                  type: string
+                targetPlatformUserId:
+                  type: string
+              required:
+              - byAccountId
+              - targetPlatformUserId
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+  /api/groups/{id}/members/leave:
+    post:
+      operationId: leaveGroupMember
+      responses:
+        '200':
+          description: OK
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                accountId:
+                  type: string
+              required:
+              - accountId
       parameters:
       - name: id
         in: path
@@ -682,6 +1272,47 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/SequenceInput'
+  /api/sequences/{id}:
+    patch:
+      operationId: updateSequence
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SequenceId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SequenceInput'
+    get:
+      operationId: getSequence
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Sequence template
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Sequence'
+        '404':
+          description: Sequence not found
   /api/groups/{id}/sequence-runs:
     post:
       operationId: startSequence
@@ -704,6 +1335,70 @@ paths:
         required: true
         schema:
           type: string
+    get:
+      operationId: listSequenceRuns
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: sequenceId
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: before
+        in: query
+        required: false
+        schema:
+          type: string
+      - name: limit
+        in: query
+        required: false
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 50
+      responses:
+        '200':
+          description: Paginated sequence run history
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SequenceRunPage'
+  /api/groups/{id}/sequence-runs/active:
+    get:
+      operationId: getActiveSequenceRun
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Current run for the group, if any
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ActiveSequenceRun'
+  /api/sequences/preview:
+    post:
+      operationId: previewSequence
+      responses:
+        '200':
+          description: Resolved steps without starting a run
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SequencePreview'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SequencePreviewInput'
   /api/sequence-runs/{id}:
     get:
       operationId: getSequenceRun
@@ -736,6 +1431,57 @@ paths:
         required: true
         schema:
           type: string
+  /api/agent-simulation:
+    get:
+      operationId: getAgentSimulation
+      responses:
+        '200':
+          description: Whether the local mock gateway simulation is enabled
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [enabled]
+                properties:
+                  enabled:
+                    type: boolean
+  /api/groups/{id}/agent-simulation/messages:
+    post:
+      operationId: simulateExternalMessage
+      parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [senderPlatformUserId, text]
+              properties:
+                senderPlatformUserId:
+                  type: string
+                text:
+                  type: string
+      responses:
+        '202':
+          description: External message accepted by the local mock gateway
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [msgId, senderPlatformUserId, sentAt]
+                properties:
+                  msgId:
+                    type: string
+                  senderPlatformUserId:
+                    type: string
+                  sentAt:
+                    type: string
+                    format: date-time
   /api/groups/{id}/agent-runs:
     get:
       operationId: listAgentRuns

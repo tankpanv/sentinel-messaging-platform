@@ -15,7 +15,12 @@ async function renew(): Promise<string | null> {
   })().finally(() => { refreshFlight = null; });
   return refreshFlight;
 }
+export function renewSession(): Promise<string | null> { return renew(); }
 const fetchWithRefresh: typeof fetch = async (input, init) => {
+  const requestUrl = new URL(input instanceof Request ? input.url : String(input), window.location.href);
+  if (requestUrl.origin !== window.location.origin || !requestUrl.pathname.startsWith('/api/')) {
+    throw new Error('控制台仅允许通过同源 Backend API 访问服务');
+  }
   const options = { ...init, credentials: 'include' as RequestCredentials };
   let response = await fetch(input, options);
   if (response.status === 401 && session && !String(input).includes('/api/auth/')) {

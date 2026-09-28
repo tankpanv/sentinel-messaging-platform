@@ -1,12 +1,15 @@
 type TurnInput = { runId: string; tools: unknown[]; messages: unknown[] };
 
 export async function anthropicTurn(input: TurnInput): Promise<{ stop_reason: string; content: unknown[] }> {
-  const key = process.env.ANTHROPIC_API_KEY;
-  const model = process.env.ANTHROPIC_MODEL;
-  if (!key || !model) throw new Error('ANTHROPIC_API_KEY and ANTHROPIC_MODEL are required');
-  const response = await fetch('https://api.anthropic.com/v1/messages', {
+  const base = (process.env.ANTHROPIC_BASE_URL || 'https://api.anthropic.com').replace(/\/$/, '');
+  const url = base.endsWith('/v1/messages') ? base : `${base}/v1/messages`;
+  const token = process.env.ANTHROPIC_AUTH_TOKEN || process.env.ANTHROPIC_API_KEY;
+  const model = process.env.ANTHROPIC_MODEL || process.env.ANTHROPIC_API_MODEL;
+  if (!token || !model) throw new Error('Anthropic token and model are required');
+  const openRouter = new URL(url).hostname === 'openrouter.ai';
+  const response = await fetch(url, {
     method: 'POST',
-    headers: { authorization: `Bearer ${key}`, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+    headers: { ...(openRouter || process.env.ANTHROPIC_AUTH_TOKEN ? { authorization: `Bearer ${token}` } : { 'x-api-key': token }), 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
     body: JSON.stringify({
       model,
       max_tokens: Math.max(128, Number(process.env.ANTHROPIC_MAX_TOKENS || 512)),
@@ -14,7 +17,7 @@ export async function anthropicTurn(input: TurnInput): Promise<{ stop_reason: st
       tools: input.tools,
       messages: input.messages,
     }),
-    signal: AbortSignal.timeout(9000),
+    signal: AbortSignal.timeout(Math.min(14500, Math.max(1000, Number(process.env.AGENT_MODEL_TIMEOUT_MS || 14000)))),
   });
   const body = await response.json() as { stop_reason?: string; content?: Array<{ type: string; id?: string; name?: string; input?: unknown; text?: string }>; error?: { message?: string } };
   if (!response.ok) throw new Error(`Anthropic returned ${response.status}: ${body.error?.message || 'unknown error'}`);

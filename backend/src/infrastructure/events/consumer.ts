@@ -18,18 +18,24 @@ async function applyEvent(client: PoolClient, event: GatewayEvent): Promise<{ no
     if (!group.rowCount) return { notifications };
     const groupId = group.rows[0].id;
     const own = await client.query('SELECT 1 FROM accounts WHERE platform_user_id=$1', [event.senderPlatformUserId]);
+    const eventMedia = event.media && typeof event.media === 'object' ? event.media as Record<string, unknown> : {};
+    const mediaUrl = typeof event.mediaUrl === 'string' && event.mediaUrl ? event.mediaUrl : typeof eventMedia.url === 'string' ? eventMedia.url : null;
+    const mediaFileName = typeof eventMedia.fileName === 'string' ? eventMedia.fileName.slice(0, 255) : null;
+    const mediaContentType = typeof eventMedia.contentType === 'string' ? eventMedia.contentType.slice(0, 255) : null;
+    const mediaSize = typeof eventMedia.size === 'number' && Number.isSafeInteger(eventMedia.size) && eventMedia.size >= 0 ? eventMedia.size : null;
     const inserted = await client.query(
-      `INSERT INTO messages(group_id,msg_id,text,sender_platform_user_id,sent_at,is_own,delivery_status,media_url)
-       VALUES($1,$2,$3,$4,$5,$6,$7,$8)
+      `INSERT INTO messages(group_id,msg_id,text,sender_platform_user_id,sent_at,is_own,delivery_status,media_url,media_file_name,media_content_type,media_size,media_status,trace_id)
+       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
        ON CONFLICT(group_id,msg_id) DO NOTHING RETURNING id`,
-      [groupId, event.msgId, event.text, event.senderPlatformUserId, event.sentAt, !!own.rowCount, own.rowCount ? 'sent' : null, event.mediaUrl || null],
+      [groupId, event.msgId, String(event.text || ''), event.senderPlatformUserId, event.sentAt, !!own.rowCount, own.rowCount ? 'sent' : null, mediaUrl, mediaFileName, mediaContentType, mediaSize, mediaUrl ? 'pending' : null, String(event.traceId || `gateway-${event.eventId}`)],
     );
     if (inserted.rowCount) {
-      notifications.push({ type: 'message', payload: { groupId, msgId: event.msgId, isOwn: !!own.rowCount } });
+      await client.query('INSERT INTO trace_events(trace_id,service,event_type,payload) VALUES($1,$2,$3,$4)', [String(event.traceId || `gateway-${event.eventId}`), 'backend', 'gateway_message_received', JSON.stringify({ eventId: event.eventId, groupId, msgId: event.msgId, senderPlatformUserId: event.senderPlatformUserId })]);
+      notifications.push({ type: 'message', payload: { groupId, msgId: event.msgId, isOwn: !!own.rowCount, hasMedia: !!mediaUrl } });
       if (!own.rowCount && group.rows[0].agent_enabled && group.rows[0].status === 'active') {
         await client.query(
-          'INSERT INTO agent_pending_messages(group_id,msg_id,sender_platform_user_id,text,sent_at) VALUES($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING',
-          [groupId, event.msgId, event.senderPlatformUserId, event.text, event.sentAt],
+          'INSERT INTO agent_pending_messages(group_id,msg_id,sender_platform_user_id,text,sent_at,trace_id,message_id) VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT DO NOTHING',
+          [groupId, event.msgId, event.senderPlatformUserId, String(event.text || ''), event.sentAt, String(event.traceId || `gateway-${event.eventId}`), inserted.rows[0].id],
         );
       }
       return { notifications };
@@ -48,17 +54,42 @@ async function applyEvent(client: PoolClient, event: GatewayEvent): Promise<{ no
     }
   }
   if (event.type === 'message_failed') {
-    await client.query("UPDATE messages SET delivery_status='failed',fail_code=$2 WHERE client_msg_id=$1 AND delivery_status NOT IN ('sent','cancelled')", [event.clientMsgId, event.code]);
+    const failed = await client.query("UPDATE messages SET delivery_status='failed',fail_code=$2 WHERE client_msg_id=$1 AND delivery_status NOT IN ('sent','cancelled') RETURNING group_id,msg_id,outbound_account_id", [event.clientMsgId, event.code]);
+    if (failed.rowCount) notifications.push({ type: 'message', payload: { groupId: failed.rows[0].group_id, msgId: failed.rows[0].msg_id || null, isOwn: true, deliveryStatus: 'failed', failCode: event.code } });
+    if (failed.rowCount && event.code === 'GROUP_WRITE_FORBIDDEN') {
+      const groupId = failed.rows[0].group_id;
+      await client.query("UPDATE groups SET status='unreachable',agent_enabled=false WHERE id=$1 AND status='active'", [groupId]);
+      const stopped = await client.query("UPDATE sequence_runs SET status='stopped' WHERE group_id=$1 AND status='running' RETURNING id,current_step_index", [groupId]);
+      await client.query("UPDATE messages SET delivery_status='cancelled',fail_code='GROUP_UNREACHABLE' WHERE group_id=$1 AND delivery_status='queued'", [groupId]);
+      notifications.push({ type: 'group_unreachable', payload: { groupId, reason: 'GROUP_WRITE_FORBIDDEN' } });
+      for (const run of stopped.rows) notifications.push({ type: 'sequence_run', payload: { runId: run.id, groupId, status: 'stopped', currentStepIndex: run.current_step_index } });
+    }
+    if (failed.rowCount && (event.code === 'ACCOUNT_SUSPENDED' || event.code === 'SESSION_EXPIRED') && failed.rows[0].outbound_account_id) {
+      const accountId = failed.rows[0].outbound_account_id;
+      const account = await client.query('SELECT status FROM accounts WHERE id=$1 FOR UPDATE', [accountId]);
+      if (account.rowCount && !isTerminal(account.rows[0].status)) {
+        const terminal = event.code === 'ACCOUNT_SUSPENDED' ? 'suspended' : 'session_expired';
+        await client.query('UPDATE accounts SET status=$2,rate_limited_until=NULL,version=version+1 WHERE id=$1', [accountId, terminal]);
+        await applyTerminalEffects(client, accountId);
+        notifications.push({ type: 'account_status_changed', payload: { accountId, from: account.rows[0].status, to: terminal } });
+        notifications.push({ type: 'account_terminal', payload: { accountId, status: terminal } });
+      }
+    }
   }
   if (event.type === 'member_joined' || event.type === 'member_left') {
     const group = await client.query('SELECT id FROM groups WHERE gateway_group_id=$1', [event.groupId]);
     const account = await client.query('SELECT id FROM accounts WHERE platform_user_id=$1', [event.platformUserId]);
-    if (group.rowCount && account.rowCount) {
+    if (group.rowCount) {
+      if (account.rowCount) {
       if (event.type === 'member_joined') {
         await client.query("INSERT INTO group_members(group_id,account_id,platform_user_id,role) VALUES($1,$2,$3,'member') ON CONFLICT DO NOTHING", [group.rows[0].id, account.rows[0].id, event.platformUserId]);
+        const completed = await client.query("UPDATE group_join_requests SET status='joined',error_code=NULL,decided_at=now() WHERE group_id=$1 AND account_id=$2 AND status IN ('pending','approved') RETURNING id", [group.rows[0].id, account.rows[0].id]);
+        for (const row of completed.rows) notifications.push({ type: 'group_join_request_changed', payload: { groupId: group.rows[0].id, requestId: row.id, accountId: account.rows[0].id, status: 'joined' } });
       } else {
         await client.query('DELETE FROM group_members WHERE group_id=$1 AND account_id=$2', [group.rows[0].id, account.rows[0].id]);
       }
+      }
+      notifications.push({ type: 'group_members_changed', payload: { groupId: group.rows[0].id, accountId: account.rows[0]?.id || null, platformUserId: event.platformUserId, action: event.type === 'member_joined' ? 'joined' : 'left' } });
     }
   }
   if (event.type === 'account_status') {
@@ -118,7 +149,22 @@ export function startGatewayConsumer({ pool, gatewayUrl, publish }: ConsumerDepe
     gatewaySseReconnects.inc();
     try {
       const cursor = await pool.query('SELECT event_id FROM gateway_cursor WHERE id=true');
-      const response = await fetch(`${gatewayUrl}/events?since=${cursor.rows[0].event_id}`);
+      let since = Number(cursor.rows[0].event_id);
+      const health = await fetch(`${gatewayUrl}/health`, { signal: AbortSignal.timeout(5000) });
+      if (health.ok) {
+        const healthBody = await health.json() as { eventId?: number };
+        if (Number.isSafeInteger(healthBody.eventId) && Number(healthBody.eventId) < since) {
+          // The gateway state was restored from an older snapshot. Its event log is authoritative now.
+          await pool.query('BEGIN');
+          try {
+            await pool.query('TRUNCATE gateway_events');
+            await pool.query('UPDATE gateway_cursor SET event_id=0 WHERE id=true');
+            await pool.query('COMMIT');
+            since = 0;
+          } catch (error) { await pool.query('ROLLBACK'); throw error; }
+        }
+      }
+      const response = await fetch(`${gatewayUrl}/events?since=${since}`);
       if (!response.ok || !response.body) throw new Error(`Gateway SSE returned ${response.status}`);
       gatewaySseConnected.set(1);
       const reader = response.body.getReader();

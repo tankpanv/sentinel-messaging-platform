@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
-API_URL="${API_URL:-http://127.0.0.1:4000}"
+API_URL="${API_URL:-http://127.0.0.1:28080}"
 json() { curl -fsS "$@"; }
 json "$API_URL/api/health" | grep -q '"ok":true'
 admin_token="$(json -H 'content-type: application/json' -d '{"username":"admin","password":"admin"}' "$API_URL/api/auth/login" | python3 -c 'import json,sys; print(json.load(sys.stdin)["accessToken"])')"

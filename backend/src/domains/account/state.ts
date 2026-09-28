@@ -2,7 +2,7 @@ import type { Pool, PoolClient } from 'pg';
 
 export type AccountStatus = 'idle' | 'online' | 'rate_limited' | 'disconnected' | 'suspended' | 'session_expired';
 export const transitions: Record<AccountStatus, readonly AccountStatus[]> = {
-  idle: ['online', 'suspended', 'session_expired'],
+  idle: ['online', 'disconnected', 'suspended', 'session_expired'],
   online: ['idle', 'rate_limited', 'disconnected', 'suspended', 'session_expired'],
   rate_limited: ['online', 'disconnected', 'suspended', 'session_expired'],
   disconnected: ['idle', 'online', 'suspended', 'session_expired'],
@@ -44,12 +44,19 @@ export async function transitionAccount(
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    const query = await client.query('SELECT status FROM accounts WHERE id=$1 FOR UPDATE', [accountId]);
+    const query = await client.query('SELECT status FROM accounts WHERE id=$1 AND deleted_at IS NULL FOR UPDATE', [accountId]);
     if (!query.rowCount) throw new AccountTransitionError('ACCOUNT_NOT_FOUND', '账号不存在');
     const from = query.rows[0].status as AccountStatus;
+    // Terminal states are idempotent across gateway events and operator
+    // retries.  Do this before the transition-table check because the table
+    // intentionally has no outgoing edges from a terminal state.
+    if (options.allowSameTerminal && from === to && isTerminal(to)) {
+      if (options.expectedFrom && from !== options.expectedFrom) throw new AccountTransitionError('CAS_CONFLICT', '状态已变化');
+      await client.query('COMMIT');
+      return { from, to, changed: false };
+    }
     if (options.expectedFrom && !transitions[options.expectedFrom]?.includes(to)) throw new AccountTransitionError('ILLEGAL_TRANSITION', '非法状态转移');
     if (options.expectedFrom && from !== options.expectedFrom) throw new AccountTransitionError('CAS_CONFLICT', '状态已变化');
-    if (from === to && isTerminal(to) && options.allowSameTerminal) { await client.query('COMMIT'); return { from, to, changed: false }; }
     if (!transitions[from]?.includes(to)) throw new AccountTransitionError('ILLEGAL_TRANSITION', '非法状态转移');
     await client.query(
       'UPDATE accounts SET status=$2,platform_user_id=COALESCE($3,platform_user_id),rate_limited_until=$4,version=version+1 WHERE id=$1',

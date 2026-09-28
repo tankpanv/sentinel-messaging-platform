@@ -13,6 +13,14 @@
  */
 
 import { mapValues } from '../runtime';
+import type { SequenceRunStep } from './SequenceRunStep';
+import {
+    SequenceRunStepFromJSON,
+    SequenceRunStepFromJSONTyped,
+    SequenceRunStepToJSON,
+    SequenceRunStepToJSONTyped,
+} from './SequenceRunStep';
+
 /**
  * 
  * @export
@@ -26,7 +34,15 @@ export interface SequenceRun {
     /**
      * 
      */
-    status: string;
+    groupId?: string;
+    /**
+     * 
+     */
+    sequenceId?: string;
+    /**
+     * 
+     */
+    status: SequenceRunStatusEnum;
     /**
      * 
      */
@@ -34,8 +50,25 @@ export interface SequenceRun {
     /**
      * 
      */
-    steps: Array<object>;
+    steps: Array<SequenceRunStep>;
+    /**
+     * 
+     */
+    createdAt?: string;
 }
+
+
+/**
+ * @export
+ */
+export const SequenceRunStatusEnum = {
+    Running: 'running',
+    Finished: 'finished',
+    Failed: 'failed',
+    Stopped: 'stopped',
+} as const;
+export type SequenceRunStatusEnum = typeof SequenceRunStatusEnum[keyof typeof SequenceRunStatusEnum];
+
 
 /**
  * Check if a given object implements the SequenceRun interface.
@@ -58,9 +91,12 @@ export function SequenceRunFromJSONTyped(json: any, ignoreDiscriminator: boolean
     return {
         
         'id': json['id'] == null ? undefined : json['id'],
+        'groupId': json['groupId'] == null ? undefined : json['groupId'],
+        'sequenceId': json['sequenceId'] == null ? undefined : json['sequenceId'],
         'status': json['status'],
         'currentStepIndex': json['currentStepIndex'],
-        'steps': json['steps'],
+        'steps': ((json['steps'] as Array<any>).map(SequenceRunStepFromJSON)),
+        'createdAt': json['createdAt'] == null ? undefined : json['createdAt'],
     };
 }
 
@@ -76,9 +112,12 @@ export function SequenceRunToJSONTyped(value?: SequenceRun | null, ignoreDiscrim
     return {
         
         'id': value['id'],
+        'groupId': value['groupId'],
+        'sequenceId': value['sequenceId'],
         'status': value['status'],
         'currentStepIndex': value['currentStepIndex'],
-        'steps': value['steps'],
+        'steps': ((value['steps'] as Array<any>).map(SequenceRunStepToJSON)),
+        'createdAt': value['createdAt'],
     };
 }
 

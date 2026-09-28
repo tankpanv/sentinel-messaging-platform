@@ -26,6 +26,10 @@ export interface Account {
     /**
      * 
      */
+    displayName?: string | null;
+    /**
+     * 
+     */
     status: string;
     /**
      * 
@@ -57,6 +61,7 @@ export function AccountFromJSONTyped(json: any, ignoreDiscriminator: boolean): A
     return {
         
         'id': json['id'],
+        'displayName': json['displayName'] === undefined ? undefined : json['displayName'] === null ? null : json['displayName'],
         'status': json['status'],
         'platformUserId': json['platformUserId'] === undefined ? undefined : json['platformUserId'] === null ? null : json['platformUserId'],
         'rateLimitedUntil': json['rateLimitedUntil'] === undefined ? undefined : json['rateLimitedUntil'] === null ? null : json['rateLimitedUntil'],
@@ -75,6 +80,7 @@ export function AccountToJSONTyped(value?: Account | null, ignoreDiscriminator: 
     return {
         
         'id': value['id'],
+        'displayName': value['displayName'],
         'status': value['status'],
         'platformUserId': value['platformUserId'],
         'rateLimitedUntil': value['rateLimitedUntil'],

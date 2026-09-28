@@ -1,8 +1,23 @@
 CREATE TABLE IF NOT EXISTS schema_migrations(version text primary key, applied_at timestamptz not null default now());
 CREATE TABLE IF NOT EXISTS users(id uuid primary key default gen_random_uuid(),username text unique not null,password_hash text not null,role text not null);
 CREATE TABLE IF NOT EXISTS accounts(id text primary key,status text not null,platform_user_id text,rate_limited_until timestamptz,version int not null default 0);
+ALTER TABLE accounts ADD COLUMN IF NOT EXISTS display_name text;
+ALTER TABLE accounts ADD COLUMN IF NOT EXISTS deleted_at timestamptz;
+ALTER TABLE accounts ADD COLUMN IF NOT EXISTS gateway_deleted_at timestamptz;
 CREATE TABLE IF NOT EXISTS groups(id uuid primary key default gen_random_uuid(),gateway_group_id text unique not null,status text not null default 'active',creator_account_id text not null references accounts(id),agent_enabled boolean not null default false,auto_kick_enabled boolean not null default false);
 CREATE TABLE IF NOT EXISTS group_members(group_id uuid references groups(id) on delete cascade,account_id text references accounts(id),platform_user_id text not null,role text not null,primary key(group_id,account_id));
+CREATE TABLE IF NOT EXISTS group_join_requests (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  group_id uuid NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
+  account_id text NOT NULL REFERENCES accounts(id),
+  status text NOT NULL CHECK (status IN ('pending','approved','joined','rejected','failed')),
+  error_code text,
+  requested_at timestamptz NOT NULL DEFAULT now(),
+  decided_at timestamptz,
+  trace_id text
+);
+CREATE UNIQUE INDEX IF NOT EXISTS one_open_group_join_request ON group_join_requests(group_id,account_id) WHERE status IN ('pending','approved');
+CREATE INDEX IF NOT EXISTS group_join_requests_list_idx ON group_join_requests(group_id,requested_at DESC);
 CREATE TABLE IF NOT EXISTS messages(id uuid primary key default gen_random_uuid(),group_id uuid references groups(id),msg_id text,client_msg_id text,text text not null,sender_platform_user_id text,sent_at timestamptz not null,delivery_status text,fail_code text,is_own boolean not null default false,unique(group_id,msg_id),unique(group_id,client_msg_id));
 CREATE TABLE IF NOT EXISTS jobs(id uuid primary key default gen_random_uuid(),status text not null,errors jsonb not null default '[]');
 CREATE TABLE IF NOT EXISTS sequences(id uuid primary key default gen_random_uuid(),name text not null,steps jsonb not null);
@@ -30,7 +45,18 @@ CREATE TABLE IF NOT EXISTS websocket_events (
   payload jsonb NOT NULL,
   created_at timestamptz NOT NULL DEFAULT now()
 );
+CREATE TABLE IF NOT EXISTS trace_events(
+  id bigserial PRIMARY KEY,
+  trace_id text NOT NULL,
+  service text NOT NULL,
+  event_type text NOT NULL,
+  payload jsonb NOT NULL DEFAULT '{}',
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS trace_events_lookup_idx ON trace_events(trace_id,created_at,id);
 ALTER TABLE sequence_runs ADD COLUMN IF NOT EXISTS created_at timestamptz NOT NULL DEFAULT now();
+CREATE INDEX IF NOT EXISTS sequence_runs_history_idx ON sequence_runs(group_id,sequence_id,created_at DESC,id DESC);
+ALTER TABLE sequence_runs ADD COLUMN IF NOT EXISTS trace_id text;
 CREATE TABLE IF NOT EXISTS auth_sessions (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id uuid NOT NULL REFERENCES users(id),
@@ -44,6 +70,7 @@ ALTER TABLE messages ADD COLUMN IF NOT EXISTS outbound_account_id text REFERENCE
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS send_attempts integer NOT NULL DEFAULT 0;
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS attempted_at timestamptz;
 CREATE INDEX IF NOT EXISTS outbound_pending_idx ON messages(sent_at,id) WHERE delivery_status IN ('queued','unknown');
+CREATE INDEX IF NOT EXISTS outbound_account_order_idx ON messages(outbound_account_id,sent_at,id) WHERE delivery_status IN ('queued','unknown','accepted');
 ALTER TABLE agent_runs ADD COLUMN IF NOT EXISTS history jsonb NOT NULL DEFAULT '[]';
 ALTER TABLE agent_runs ADD COLUMN IF NOT EXISTS trigger_messages jsonb NOT NULL DEFAULT '[]';
 ALTER TABLE agent_runs ADD COLUMN IF NOT EXISTS lease_until timestamptz;
@@ -67,6 +94,13 @@ CREATE TABLE IF NOT EXISTS agent_tool_effects (
   UNIQUE(run_id,idempotency_key)
 );
 ALTER TABLE agent_runs ADD COLUMN IF NOT EXISTS remaining_ms integer NOT NULL DEFAULT 60000;
+ALTER TABLE agent_runs ADD COLUMN IF NOT EXISTS pending_turn jsonb;
+ALTER TABLE agent_runs ADD COLUMN IF NOT EXISTS trace_id text;
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS trace_id text;
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS trace_id text;
+ALTER TABLE agent_pending_messages ADD COLUMN IF NOT EXISTS trace_id text;
+ALTER TABLE agent_pending_messages ADD COLUMN IF NOT EXISTS message_id uuid REFERENCES messages(id) ON DELETE CASCADE;
+UPDATE agent_pending_messages p SET message_id=m.id FROM messages m WHERE p.message_id IS NULL AND m.group_id=p.group_id AND m.msg_id=p.msg_id;
 ALTER TABLE jobs ADD COLUMN IF NOT EXISTS kind text;
 ALTER TABLE jobs ADD COLUMN IF NOT EXISTS group_id uuid REFERENCES groups(id);
 ALTER TABLE jobs ADD COLUMN IF NOT EXISTS payload jsonb NOT NULL DEFAULT '{}';
@@ -76,6 +110,15 @@ CREATE INDEX IF NOT EXISTS jobs_recovery_idx ON jobs(status,lease_until) WHERE s
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS media_url text;
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS local_file_path text;
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS media_content_type text;
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS media_file_name text;
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS media_size bigint;
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS media_status text;
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS media_retry_after timestamptz;
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS media_download_attempts integer NOT NULL DEFAULT 0;
 CREATE INDEX IF NOT EXISTS messages_media_pending_idx ON messages(media_retry_after) WHERE media_url IS NOT NULL AND local_file_path IS NULL;
+CREATE TABLE IF NOT EXISTS agent_run_media_refs (
+  run_id uuid NOT NULL REFERENCES agent_runs(id) ON DELETE CASCADE,
+  message_id uuid NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+  PRIMARY KEY(run_id,message_id)
+);
+CREATE INDEX IF NOT EXISTS agent_run_media_refs_message_idx ON agent_run_media_refs(message_id,run_id);

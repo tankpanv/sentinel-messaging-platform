@@ -2,10 +2,20 @@ import express from 'express';
 import fs from 'node:fs';
 import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
+import { Ajv } from 'ajv';
 import { anthropicTurn } from './anthropic.js';
 
 const app = express();
 app.use(express.json({ limit: '256kb' }));
+app.use((req, res, next) => {
+  const traceId = req.header('x-trace-id') || randomUUID();
+  res.setHeader('x-trace-id', traceId);
+  const started = Date.now();
+  res.on('finish', () => console.log(JSON.stringify({ event: 'http_request', service: 'agent', traceId, method: req.method, path: req.path, status: res.statusCode, durationMs: Date.now() - started })));
+  next();
+});
+const envFile = path.resolve(import.meta.dirname, '..', '.env');
+if (fs.existsSync(envFile)) process.loadEnvFile(envFile);
 const port = Number(process.env.PORT || 4002);
 const sessionFile = process.env.AGENT_SESSION_FILE || path.resolve(import.meta.dirname, '..', 'data', 'sessions.json');
 type Session = { contextHash: string; turns: number; createdAt: string };
@@ -20,12 +30,23 @@ const signatures: Record<string, string[]> = {
   get_recent_messages: ['limit'], send_message: ['text', 'idempotency_key'],
   kick_user: ['platform_user_id', 'reason'], finish: ['summary'],
 };
+const schemaValidator = new Ajv();
+const inputTypes: Record<string, Record<string, string>> = {
+  get_recent_messages: { limit: 'number' }, send_message: { text: 'string', idempotency_key: 'string' },
+  kick_user: { platform_user_id: 'string', reason: 'string' }, finish: { summary: 'string' },
+};
 function validTools(tools: unknown): boolean {
   if (!Array.isArray(tools) || tools.length !== 4) return false;
   const names = tools.map(tool => tool?.name);
   if (new Set(names).size !== 4 || names.some(name => !(name in signatures))) return false;
-  return tools.every(tool => tool.input_schema?.type === 'object' && Array.isArray(tool.input_schema.required)
-    && signatures[tool.name].every(input => tool.input_schema.required.includes(input) && tool.input_schema.properties?.[input]));
+  return tools.every(tool => {
+    try {
+      const schema = tool.input_schema;
+      return typeof tool.description === 'string' && schema?.type === 'object' && schemaValidator.validateSchema(schema)
+        && Array.isArray(schema.required) && signatures[tool.name].every(input => schema.required.includes(input)
+          && schema.properties?.[input]?.type === inputTypes[tool.name][input]);
+    } catch { return false; }
+  });
 }
 function tool(name: string, input: Record<string, unknown>) {
   return { stop_reason: 'tool_use', content: [{ type: 'tool_use', id: `tu-${randomUUID()}`, name, input }] };
@@ -67,7 +88,12 @@ app.post('/agent/turn', async (req, res) => {
     if (!previous) return res.json(tool('get_recent_messages', { limit: 20 }));
     if (previous.name === 'get_recent_messages') {
       const messagesInGroup = Array.isArray(previous.result.messages) ? previous.result.messages : context.triggerMessages;
-      const incoming = [...messagesInGroup].reverse().find((message: any) => !message.isOwn && !context.ownPlatformUserIds.includes(message.senderPlatformUserId) && typeof message.text === 'string');
+      // Bind the mock decision to this run's trigger batch. Newer messages
+      // remain visible to the model and are queued for the next run, but they
+      // must not displace the message that caused this run to start.
+      const triggerIds = new Set(context.triggerMessages.map((message: any) => message.msgId));
+      const incoming = messagesInGroup.find((message: any) => triggerIds.has(message.msgId) && !message.isOwn && !context.ownPlatformUserIds.includes(message.senderPlatformUserId) && typeof message.text === 'string')
+        || context.triggerMessages.find((message: any) => !context.ownPlatformUserIds.includes(message.senderPlatformUserId) && typeof message.text === 'string');
       if (!incoming) return res.json(final('没有需要回复的外部消息'));
       if (context.policy?.autoKickEnabled && /\b(spam|scam|phishing)\b|广告|诈骗/i.test(incoming.text)) {
         return res.json(tool('kick_user', { platform_user_id: incoming.senderPlatformUserId, reason: '自动审核识别到骚扰或诈骗消息' }));

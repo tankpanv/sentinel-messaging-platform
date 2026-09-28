@@ -8,5 +8,6 @@ test('account state table has no terminal exits and no self transitions', () => 
     if (isTerminal(from)) assert.equal(targets.length, 0);
   }
   assert(transitions.online.includes('rate_limited'));
+  assert(transitions.idle.includes('online'));
   assert(transitions.rate_limited.includes('online'));
 });

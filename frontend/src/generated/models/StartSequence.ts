@@ -31,6 +31,10 @@ export interface StartSequence {
      * 
      */
     stepVars?: { [key: string]: { [key: string]: string; }; };
+    /**
+     * Optional sender override by one-based step index; an empty string restores automatic role selection.
+     */
+    stepAccountIds?: { [key: string]: string; };
 }
 
 /**
@@ -54,6 +58,7 @@ export function StartSequenceFromJSONTyped(json: any, ignoreDiscriminator: boole
         'sequenceId': json['sequenceId'],
         'vars': json['vars'] == null ? undefined : json['vars'],
         'stepVars': json['stepVars'] == null ? undefined : json['stepVars'],
+        'stepAccountIds': json['stepAccountIds'] == null ? undefined : json['stepAccountIds'],
     };
 }
 
@@ -71,6 +76,7 @@ export function StartSequenceToJSONTyped(value?: StartSequence | null, ignoreDis
         'sequenceId': value['sequenceId'],
         'vars': value['vars'],
         'stepVars': value['stepVars'],
+        'stepAccountIds': value['stepAccountIds'],
     };
 }
 

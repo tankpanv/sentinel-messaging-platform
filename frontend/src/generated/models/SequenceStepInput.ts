@@ -28,6 +28,10 @@ export interface SequenceStepInput {
      */
     accountRole: string;
     /**
+     * Optional service account ID; when omitted the sender is selected by accountRole.
+     */
+    senderAccountId?: string;
+    /**
      * 
      */
     text: string;
@@ -60,6 +64,7 @@ export function SequenceStepInputFromJSONTyped(json: any, ignoreDiscriminator: b
         
         'index': json['index'],
         'accountRole': json['accountRole'],
+        'senderAccountId': json['senderAccountId'] == null ? undefined : json['senderAccountId'],
         'text': json['text'],
         'delaySeconds': json['delaySeconds'],
     };
@@ -78,6 +83,7 @@ export function SequenceStepInputToJSONTyped(value?: SequenceStepInput | null, i
         
         'index': value['index'],
         'accountRole': value['accountRole'],
+        'senderAccountId': value['senderAccountId'],
         'text': value['text'],
         'delaySeconds': value['delaySeconds'],
     };

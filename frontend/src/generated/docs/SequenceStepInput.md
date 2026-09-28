@@ -8,6 +8,7 @@ Name | Type
 ------------ | -------------
 `index` | number
 `accountRole` | string
+`senderAccountId` | string
 `text` | string
 `delaySeconds` | number
 
@@ -20,6 +21,7 @@ import type { SequenceStepInput } from ''
 const example = {
   "index": null,
   "accountRole": null,
+  "senderAccountId": null,
   "text": null,
   "delaySeconds": null,
 } satisfies SequenceStepInput

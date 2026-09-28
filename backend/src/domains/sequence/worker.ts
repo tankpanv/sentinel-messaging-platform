@@ -21,23 +21,36 @@ async function sequenceTick(){
         if(step.clientMsgId){
           const message=await client.query('SELECT delivery_status,sent_at,fail_code FROM messages WHERE client_msg_id=$1',[step.clientMsgId]);
           const delivery=message.rows[0]?.delivery_status;
-          if(delivery==='sent'){step.status='sent';step.sentAt=message.rows[0].sent_at;scheduleNext(steps,index,step.sentAt);await client.query('UPDATE sequence_runs SET steps=$2,current_step_index=$3 WHERE id=$1',[run.id,JSON.stringify(steps),index+1]);}
-          else if(delivery==='accepted'&&step.status!=='accepted'){step.status='accepted';await client.query('UPDATE sequence_runs SET steps=$2 WHERE id=$1',[run.id,JSON.stringify(steps)]);}
-          else if(delivery==='failed'||delivery==='cancelled'){step.status=delivery==='cancelled'?'skipped':'failed';step.sentAt=new Date().toISOString();scheduleNext(steps,index,step.sentAt);await client.query('UPDATE sequence_runs SET steps=$2,current_step_index=$3 WHERE id=$1',[run.id,JSON.stringify(steps),index+1]);}
-          await client.query('COMMIT');continue;
+          let progressEvent:any=null;
+          if(delivery==='sent'){step.status='sent';step.sentAt=message.rows[0].sent_at;scheduleNext(steps,index,step.sentAt);await client.query('UPDATE sequence_runs SET steps=$2,current_step_index=$3 WHERE id=$1',[run.id,JSON.stringify(steps),index+1]);progressEvent={runId:run.id,groupId:run.group_id,status:'running',currentStepIndex:index+1};}
+          else if(delivery==='accepted'&&step.status!=='accepted'){step.status='accepted';await client.query('UPDATE sequence_runs SET steps=$2 WHERE id=$1',[run.id,JSON.stringify(steps)]);progressEvent={runId:run.id,groupId:run.group_id,status:'running',currentStepIndex:index};}
+          else if(delivery==='failed'||delivery==='cancelled'){
+            step.status=delivery==='cancelled'?'skipped':'failed';
+            step.sentAt=new Date().toISOString();
+            if(delivery==='failed'){
+              await client.query("UPDATE sequence_runs SET status='failed',steps=$2 WHERE id=$1",[run.id,JSON.stringify(steps)]);
+              progressEvent={runId:run.id,groupId:run.group_id,status:'failed',currentStepIndex:index};
+            } else {
+              scheduleNext(steps,index,step.sentAt);
+              await client.query('UPDATE sequence_runs SET steps=$2,current_step_index=$3 WHERE id=$1',[run.id,JSON.stringify(steps),index+1]);
+              progressEvent={runId:run.id,groupId:run.group_id,status:'running',currentStepIndex:index+1};
+            }
+          }
+          await client.query('COMMIT');if(progressEvent)broadcast('sequence_run',progressEvent);continue;
         }
         const previous=index===0?new Date(run.created_at).getTime():new Date(steps[index-1].sentAt).getTime();
         const dueAt=step.scheduledAt?new Date(step.scheduledAt).getTime():previous+Number(step.delaySeconds||0)*1000;
         if(Date.now()<dueAt){await client.query('COMMIT');continue}
         const role=step.accountRole==='admin'?"m.role IN ('creator','admin')":"m.role='member'";
-        const accounts=await client.query(`SELECT m.account_id,m.platform_user_id,a.status FROM group_members m JOIN accounts a ON a.id=m.account_id WHERE m.group_id=$1 AND ${role} AND a.status IN ('online','rate_limited') ORDER BY (m.role='admin') DESC,m.account_id`,[run.group_id]);
+        const explicitSender=typeof step.senderAccountId==='string'&&step.senderAccountId.length>0;
+        const accounts=await client.query(`SELECT m.account_id,m.platform_user_id,a.status FROM group_members m JOIN accounts a ON a.id=m.account_id WHERE m.group_id=$1 AND ${explicitSender?'m.account_id=$2':role} AND a.status IN ('online','rate_limited') ORDER BY (a.status='online') DESC,(m.role='admin') DESC,m.account_id FOR UPDATE OF a,m`,explicitSender?[run.group_id,step.senderAccountId]:[run.group_id]);
         const account=accounts.rows[0];
         if(!account){
-          step.status='skipped';step.sentAt=new Date().toISOString();scheduleNext(steps,index,step.sentAt);await client.query('UPDATE sequence_runs SET steps=$2,current_step_index=$3 WHERE id=$1',[run.id,JSON.stringify(steps),index+1]);await client.query('COMMIT');continue;
+          step.status='skipped';step.sentAt=new Date().toISOString();scheduleNext(steps,index,step.sentAt);await client.query('UPDATE sequence_runs SET steps=$2,current_step_index=$3 WHERE id=$1',[run.id,JSON.stringify(steps),index+1]);await client.query('COMMIT');broadcast('sequence_run',{runId:run.id,groupId:run.group_id,status:'running',currentStepIndex:index+1});continue;
         }
         if(account.status==='rate_limited'){await client.query('COMMIT');continue}
-        const clientMsgId=randomUUID();step.clientMsgId=clientMsgId;step.scheduledAt=new Date().toISOString();
-        await client.query("INSERT INTO messages(group_id,client_msg_id,text,sender_platform_user_id,sent_at,delivery_status,is_own,outbound_account_id) VALUES($1,$2,$3,$4,now(),'queued',true,$5)",[run.group_id,clientMsgId,step.text,account.platform_user_id,account.account_id]);
+        const clientMsgId=randomUUID();step.clientMsgId=clientMsgId;step.scheduledAt=new Date(dueAt).toISOString();step.accountId=account.account_id;
+        await client.query("INSERT INTO messages(group_id,client_msg_id,text,sender_platform_user_id,sent_at,delivery_status,is_own,outbound_account_id,trace_id) VALUES($1,$2,$3,$4,now(),'queued',true,$5,$6)",[run.group_id,clientMsgId,step.text,account.platform_user_id,account.account_id,run.trace_id||null]);
         await client.query('UPDATE sequence_runs SET steps=$2 WHERE id=$1',[run.id,JSON.stringify(steps)]);
         await client.query('COMMIT');
       }catch(error){await client.query('ROLLBACK');console.error(JSON.stringify({event:'sequence_tick_failed',runId:item.id,error:String(error)}));}

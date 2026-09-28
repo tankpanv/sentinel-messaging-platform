@@ -12,6 +12,7 @@ Name | Type
 `endReason` | string
 `summary` | string
 `steps` | [Array&lt;AgentStep&gt;](AgentStep.md)
+`traceId` | string
 `createdAt` | string
 
 ## Example
@@ -27,6 +28,7 @@ const example = {
   "endReason": null,
   "summary": null,
   "steps": null,
+  "traceId": null,
   "createdAt": null,
 } satisfies AgentRun
 

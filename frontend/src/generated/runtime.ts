@@ -12,7 +12,7 @@
  * Do not edit the class manually.
  */
 
-export const BASE_PATH = "http://127.0.0.1:4000".replace(/\/+$/, "");
+export const BASE_PATH = "";
 
 export interface ConfigurationParameters {
     basePath?: string; // override base path

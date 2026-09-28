@@ -5,9 +5,16 @@
     "dev": "bash scripts/dev-local.sh",
     "build": "npm --prefix backend run build && npm --prefix gateway-service run build && npm --prefix agent-service run build && npm --prefix frontend run build",
     "migrate": "bash scripts/migrate-local.sh",
-    "api:generate": "openapi-generator-cli generate -i openapi/openapi.yaml -g typescript-fetch -o frontend/src/generated --additional-properties=supportsES6=true,dateLibrary=string",
+    "api:generate": "openapi-generator-cli generate -i openapi/openapi.yaml -g typescript-fetch -o frontend/src/generated --additional-properties=supportsES6=true,dateLibrary=string && node scripts/postprocess-openapi.mjs",
+    "check:boundary": "node scripts/check-frontend-boundary.mjs",
     "integration": "node scripts/integration-local.mjs",
-    "e2e": "node scripts/e2e-local.mjs"
+    "e2e": "node scripts/e2e-local.mjs",
+    "test:c3": "bash tests/frontend/c3-agent-run.sh",
+    "test:c3:only": "playwright test --config tests/frontend/playwright.c3.config.mjs",
+    "test:c3:report": "playwright show-report test-results/c3-agent-run/html",
+    "test:all": "bash tests/run-all.sh",
+    "test:agent": "bash tests/agent/contract-cases.sh && bash tests/agent/pipeline-cases.sh",
+    "test:a1": "node --env-file=.env tests/backend/a1-acceptance.mjs"
   },
   "devDependencies": {
     "@openapitools/openapi-generator-cli": "^2.41.0",

@@ -13,6 +13,14 @@
  */
 
 import { mapValues } from '../runtime';
+import type { MessageMedia } from './MessageMedia';
+import {
+    MessageMediaFromJSON,
+    MessageMediaFromJSONTyped,
+    MessageMediaToJSON,
+    MessageMediaToJSONTyped,
+} from './MessageMedia';
+
 /**
  * 
  * @export
@@ -58,11 +66,11 @@ export interface Message {
     /**
      * 
      */
-    mediaUrl?: string | null;
+    localFilePath?: string | null;
     /**
      * 
      */
-    localFilePath?: string | null;
+    media?: MessageMedia | null;
 }
 
 /**
@@ -91,8 +99,8 @@ export function MessageFromJSONTyped(json: any, ignoreDiscriminator: boolean): M
         'sentAt': json['sentAt'] == null ? undefined : json['sentAt'],
         'deliveryStatus': json['deliveryStatus'] === undefined ? undefined : json['deliveryStatus'] === null ? null : json['deliveryStatus'],
         'failCode': json['failCode'] === undefined ? undefined : json['failCode'] === null ? null : json['failCode'],
-        'mediaUrl': json['mediaUrl'] === undefined ? undefined : json['mediaUrl'] === null ? null : json['mediaUrl'],
         'localFilePath': json['localFilePath'] === undefined ? undefined : json['localFilePath'] === null ? null : json['localFilePath'],
+        'media': json['media'] === undefined ? undefined : json['media'] === null ? null : MessageMediaFromJSON(json['media']),
     };
 }
 
@@ -116,8 +124,8 @@ export function MessageToJSONTyped(value?: Message | null, ignoreDiscriminator: 
         'sentAt': value['sentAt'],
         'deliveryStatus': value['deliveryStatus'],
         'failCode': value['failCode'],
-        'mediaUrl': value['mediaUrl'],
         'localFilePath': value['localFilePath'],
+        'media': MessageMediaToJSON(value['media']),
     };
 }
 

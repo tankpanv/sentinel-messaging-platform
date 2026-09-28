@@ -20,6 +20,13 @@ import {
     GroupMemberToJSON,
     GroupMemberToJSONTyped,
 } from './GroupMember';
+import type { GatewayGroupMember } from './GatewayGroupMember';
+import {
+    GatewayGroupMemberFromJSON,
+    GatewayGroupMemberFromJSONTyped,
+    GatewayGroupMemberToJSON,
+    GatewayGroupMemberToJSONTyped,
+} from './GatewayGroupMember';
 
 /**
  * 
@@ -56,6 +63,14 @@ export interface Group {
      */
     members?: Array<GroupMember>;
     /**
+     * Gateway 当前完整成员快照，包含平台托管账号和其他 Gateway 用户
+     */
+    gatewayMembers?: Array<GatewayGroupMember>;
+    /**
+     * 本次响应是否成功从 Gateway 读取当前成员
+     */
+    gatewayMembersSynced?: boolean;
+    /**
      * 
      */
     activeSequenceRunId?: string | null;
@@ -91,6 +106,8 @@ export function GroupFromJSONTyped(json: any, ignoreDiscriminator: boolean): Gro
         'agentEnabled': json['agentEnabled'] == null ? undefined : json['agentEnabled'],
         'autoKickEnabled': json['autoKickEnabled'] == null ? undefined : json['autoKickEnabled'],
         'members': json['members'] == null ? undefined : ((json['members'] as Array<any>).map(GroupMemberFromJSON)),
+        'gatewayMembers': json['gatewayMembers'] == null ? undefined : ((json['gatewayMembers'] as Array<any>).map(GatewayGroupMemberFromJSON)),
+        'gatewayMembersSynced': json['gatewayMembersSynced'] == null ? undefined : json['gatewayMembersSynced'],
         'activeSequenceRunId': json['activeSequenceRunId'] === undefined ? undefined : json['activeSequenceRunId'] === null ? null : json['activeSequenceRunId'],
         'activeAgentRunId': json['activeAgentRunId'] === undefined ? undefined : json['activeAgentRunId'] === null ? null : json['activeAgentRunId'],
     };
@@ -114,6 +131,8 @@ export function GroupToJSONTyped(value?: Group | null, ignoreDiscriminator: bool
         'agentEnabled': value['agentEnabled'],
         'autoKickEnabled': value['autoKickEnabled'],
         'members': value['members'] == null ? undefined : ((value['members'] as Array<any>).map(GroupMemberToJSON)),
+        'gatewayMembers': value['gatewayMembers'] == null ? undefined : ((value['gatewayMembers'] as Array<any>).map(GatewayGroupMemberToJSON)),
+        'gatewayMembersSynced': value['gatewayMembersSynced'],
         'activeSequenceRunId': value['activeSequenceRunId'],
         'activeAgentRunId': value['activeAgentRunId'],
     };

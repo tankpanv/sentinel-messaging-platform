@@ -13,6 +13,8 @@ Name | Type
 `agentEnabled` | boolean
 `autoKickEnabled` | boolean
 `members` | [Array&lt;GroupMember&gt;](GroupMember.md)
+`gatewayMembers` | [Array&lt;GatewayGroupMember&gt;](GatewayGroupMember.md)
+`gatewayMembersSynced` | boolean
 `activeSequenceRunId` | string
 `activeAgentRunId` | string
 
@@ -30,6 +32,8 @@ const example = {
   "agentEnabled": null,
   "autoKickEnabled": null,
   "members": null,
+  "gatewayMembers": null,
+  "gatewayMembersSynced": null,
   "activeSequenceRunId": null,
   "activeAgentRunId": null,
 } satisfies Group
