@@ -3,8 +3,9 @@ import {spawn} from 'node:child_process';
 import pg from '../../backend/node_modules/pg/lib/index.js';
 const schema=`a1_check_${Date.now()}`;
 let pool=new pg.Pool({connectionString:process.env.DATABASE_URL});
-const env={...process.env,PGOPTIONS:`-c search_path=${schema},public`,PORT:'28491',GATEWAY_URL:'http://127.0.0.1:1',AGENT_URL:'http://127.0.0.1:1',NODE_OPTIONS:''};
+ const env={...process.env,PGOPTIONS:`-c search_path=${schema},public`,PORT:'28491',GATEWAY_URL:'http://127.0.0.1:1',AGENT_URL:'http://127.0.0.1:1',NODE_OPTIONS:''};
 function launch(args){const p=spawn(process.execPath,args,{env});let output='';p.stdout.on('data',v=>output+=v);p.stderr.on('data',v=>output+=v);return {p,done:new Promise(resolve=>p.on('exit',code=>resolve({code,output}))),output:()=>output};}
+async function stop(instance){if(!instance)return;instance.p.kill('SIGTERM');const timer=setTimeout(()=>instance.p.kill('SIGKILL'),1500);await instance.done;clearTimeout(timer);}
 const base='http://127.0.0.1:28491';let server;
 async function req(path,method='GET',body,token){const r=await fetch(base+path,{method,headers:{'content-type':'application/json',...(token?{authorization:`Bearer ${token}`}:{})},body:body===undefined?undefined:JSON.stringify(body)});return {status:r.status,data:await r.json()};}
 async function migrate(){const result=await launch(['--import','./backend/node_modules/tsx/dist/loader.mjs','backend/src/infrastructure/db/migrate.ts']).done;assert.equal(result.code,0,result.output);}
@@ -15,23 +16,33 @@ try{
  await pool.end();pool=new pg.Pool({connectionString:process.env.DATABASE_URL,options:`-c search_path=${schema},public`});
  await migrate();await migrate();
  server=launch(['backend/dist/index.js']);
- for(let i=0;i<80;i++){try{if((await req('/api/health')).status===200)break}catch{} await new Promise(r=>setTimeout(r,100));}
- const login=await req('/api/auth/login','POST',{username:'admin',password:'admin'});assert.equal(login.status,200);const token=login.data.accessToken;
+ let healthy=false;
+ for(let i=0;i<80;i++){try{const health=await req('/api/health');if(health.status===200&&health.data.ok){healthy=true;break}}catch{} await new Promise(r=>setTimeout(r,100));}
+ assert.ok(healthy,`Backend did not become healthy; startup output: ${server.output()}`);
+ const login=await req('/api/auth/login','POST',{username:'admin',password:'admin'});assert.equal(login.status,200,`login failed: ${JSON.stringify(login.data)}; server: ${server.output()}`);const token=login.data.accessToken;
  const fixture=`a1-${Date.now()}`;
  await pool.query("INSERT INTO accounts(id,status,platform_user_id) VALUES($1,'idle',$2)",[fixture,`${fixture}-pid`]);
  for(const from of status) for(const to of status){
    await pool.query('UPDATE accounts SET status=$2,rate_limited_until=NULL WHERE id=$1',[fixture,from]);
    const result=await req(`/api/accounts/${fixture}/transition`,'POST',{expectedFrom:from,to},token);
-   const allowed=edges[from].includes(to);
-   assert.equal(result.status,allowed?200:409,`${from}->${to} returned ${result.status}: ${JSON.stringify(result.data)}`);
-   if(!allowed)assert.equal(result.data.error.code,'ILLEGAL_TRANSITION');
+   const allowed=edges[from].includes(to),duplicateTerminal=from===to&&(to==='suspended'||to==='session_expired');
+   assert.equal(result.status,(allowed||duplicateTerminal)?200:409,`${from}->${to} returned ${result.status}: ${JSON.stringify(result.data)}`);
+   if(!allowed&&!duplicateTerminal)assert.equal(result.data.error.code,'ILLEGAL_TRANSITION');
    const actual=(await pool.query('SELECT status FROM accounts WHERE id=$1',[fixture])).rows[0].status;
-   assert.equal(actual,allowed?to:from,`${from}->${to} persistence`);
+   assert.equal(actual,(allowed||duplicateTerminal)?to:from,`${from}->${to} persistence`);
  }
  // CAS: simultaneous legal writes with the same expectedFrom must not overwrite.
  await pool.query("UPDATE accounts SET status='online' WHERE id=$1",[fixture]);
  const pair=await Promise.all([req(`/api/accounts/${fixture}/transition`,'POST',{expectedFrom:'online',to:'idle'},token),req(`/api/accounts/${fixture}/transition`,'POST',{expectedFrom:'online',to:'disconnected'},token)]);
  assert.deepEqual(pair.map(x=>x.status).sort(),[200,409]);assert.equal(pair.find(x=>x.status===409).data.error.code,'CAS_CONFLICT');
+ // An expired persisted rate limit must recover after a process restart.
+ await pool.query("UPDATE accounts SET status='rate_limited',rate_limited_until=now()-interval '1 second' WHERE id=$1",[fixture]);
+ await stop(server);server=launch(['backend/dist/index.js']);
+ healthy=false;
+ for(let i=0;i<80;i++){try{const health=await req('/api/health');if(health.status===200&&health.data.ok){healthy=true;break}}catch{} await new Promise(r=>setTimeout(r,100));}
+ assert.ok(healthy,`Backend restart did not become healthy; startup output: ${server.output()}`);
+ for(let i=0;i<80;i++){const status=(await pool.query('SELECT status FROM accounts WHERE id=$1',[fixture])).rows[0].status;if(status==='online')break;await new Promise(r=>setTimeout(r,100));}
+ assert.equal((await pool.query('SELECT status,rate_limited_until FROM accounts WHERE id=$1',[fixture])).rows[0].status,'online','expired persisted rate limit recovers on restart');
  // Terminal effects and status commit together: membership removed, queued send cancelled, sequence step skipped.
  const groupId=(await pool.query("INSERT INTO groups(gateway_group_id,creator_account_id) VALUES($1,$2) RETURNING id",[`gw-${fixture}`,fixture])).rows[0].id;
  await pool.query("INSERT INTO group_members(group_id,account_id,platform_user_id,role) VALUES($1,$2,$3,'creator')",[groupId,fixture,`${fixture}-pid`]);
@@ -47,5 +58,5 @@ try{
  const steps=(await pool.query('SELECT steps FROM sequence_runs WHERE id=$1',[run])).rows[0].steps;assert.equal(steps[0].status,'skipped');assert.ok(steps[0].sentAt);
  const duplicate=await req(`/api/accounts/${fixture}/transition`,'POST',{expectedFrom:'suspended',to:'suspended'},token);assert.equal(duplicate.status,200);
  const stillTerminal=await pool.query('SELECT status FROM accounts WHERE id=$1',[fixture]);assert.equal(stillTerminal.rows[0].status,'suspended');
- console.log(JSON.stringify({ok:true,environment:'isolated PostgreSQL schema and Backend',gateway:env.GATEWAY_URL,agent:'not invoked',checks:['all 36 state pairs','idle to disconnected','self transitions rejected','terminal states have no exits','CAS race returns exactly one success and one conflict','terminal effects atomic in one DB transaction','duplicate terminal transition ignored'],statePairs:36}));
-}finally{if(server){server.p.kill('SIGTERM');const timer=setTimeout(()=>server.p.kill('SIGKILL'),1500);await server.done;clearTimeout(timer)}await pool.query(`DROP SCHEMA ${schema} CASCADE`);await pool.end()}
+ console.log(JSON.stringify({ok:true,environment:'isolated PostgreSQL schema and Backend; simulated/unavailable Gateway (127.0.0.1:1)',agent:'not invoked',checks:['all 36 state pairs','idle to disconnected and idle to online rejected','self transitions rejected','terminal states have no exits','CAS race returns exactly one success and one conflict','expired persisted rate limit recovers after Backend restart','terminal effects atomic in one DB transaction','duplicate terminal transition ignored'],statePairs:36}));
+}finally{await stop(server);await pool.query(`DROP SCHEMA ${schema} CASCADE`);await pool.end()}

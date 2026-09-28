@@ -36,6 +36,10 @@ export interface Job {
      */
     status: string;
     /**
+     * Current worker step and its step-specific progress fields.
+     */
+    progress?: { [key: string]: any };
+    /**
      * 
      */
     errors: Array<JobErrorsInner>;
@@ -62,6 +66,7 @@ export function JobFromJSONTyped(json: any, ignoreDiscriminator: boolean): Job {
         
         'id': json['id'] == null ? undefined : json['id'],
         'status': json['status'],
+        'progress': json['progress'] == null ? undefined : json['progress'],
         'errors': ((json['errors'] as Array<any>).map(JobErrorsInnerFromJSON)),
     };
 }
@@ -79,7 +84,7 @@ export function JobToJSONTyped(value?: Job | null, ignoreDiscriminator: boolean 
         
         'id': value['id'],
         'status': value['status'],
+        'progress': value['progress'],
         'errors': ((value['errors'] as Array<any>).map(JobErrorsInnerToJSON)),
     };
 }
-

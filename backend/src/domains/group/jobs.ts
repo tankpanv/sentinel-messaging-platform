@@ -1,6 +1,8 @@
 import type { Pool } from 'pg';
 
-type Job = { id: string; trace_id?: string; kind: 'create' | 'leave_all'; group_id: string | null; payload: { creatorAccountId?: string; memberAccountIds?: string[] }; progress: { promoteAttempts?: number; processed?: string[]; errors?: { step: string; code: string }[] } };
+type JobFailure = { step: string; code: string; at?: string };
+type JobProgress = { step?: string; currentAccountId?: string; completedMemberAccountIds?: string[]; inviteAttempts?: number; promoteAttempts?: number; processed?: string[]; errors?: JobFailure[]; retryCount?: number; lastFailure?: JobFailure };
+type Job = { id: string; trace_id?: string; kind: 'create' | 'leave_all'; group_id: string | null; payload: { creatorAccountId?: string; memberAccountIds?: string[] }; progress: JobProgress };
 type Dependencies = { pool: Pool; gatewayUrl: string; publish: (type: string, payload: Record<string, unknown>) => void };
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -16,7 +18,19 @@ export function startGroupJobs({ pool, gatewayUrl, publish }: Dependencies): voi
     await pool.query('UPDATE jobs SET progress=$2 WHERE id=$1', [job.id, JSON.stringify(job.progress)]);
   }
   async function finish(job: Job, errors: { step: string; code: string }[]) {
+    job.progress = { ...job.progress, step: errors.length ? 'failed' : 'complete', currentAccountId: undefined, errors };
+    if (errors.length) job.progress.lastFailure = errors[errors.length - 1];
     await pool.query('UPDATE jobs SET status=$2,errors=$3,progress=$4,lease_until=NULL WHERE id=$1', [job.id, errors.length ? 'failed' : 'finished', JSON.stringify(errors), JSON.stringify(job.progress)]);
+  }
+  async function setStep(job: Job, step: string, extra: Partial<JobProgress> = {}) {
+    job.progress = { ...job.progress, ...extra, step, lastFailure: undefined };
+    await saveProgress(job);
+  }
+  async function recordFailure(job: Job, errors: { step: string; code: string }[], step: string, code: string) {
+    const failure = { step, code };
+    errors.push(failure);
+    job.progress = { ...job.progress, errors: [...errors], lastFailure: { ...failure, at: new Date().toISOString() } };
+    await saveProgress(job);
   }
   async function members(gatewayId: string, traceId?: string): Promise<string[]> {
     const result = await gateway(gatewayUrl, `/groups/${gatewayId}/members`, 'GET', undefined, traceId);
@@ -46,6 +60,7 @@ export function startGroupJobs({ pool, gatewayUrl, publish }: Dependencies): voi
     let groupId = job.group_id;
     let gatewayId: string;
     if (!groupId) {
+      await setStep(job, 'create');
       const created = await gateway(gatewayUrl, '/groups', 'POST', { creatorAccountId: creator, clientJobId: job.id }, job.trace_id);
       if (!created.response.ok) { await finish(job, [{ step: 'create', code: created.data.code || 'CREATE_FAILED' }]); return; }
       gatewayId = created.data.groupId;
@@ -64,43 +79,64 @@ export function startGroupJobs({ pool, gatewayUrl, publish }: Dependencies): voi
       gatewayId = group.rows[0].gateway_group_id;
     }
     const errors: { step: string; code: string }[] = [];
+    const completed = new Set(job.progress.completedMemberAccountIds || []);
     for (const accountId of memberIds) {
+      await setStep(job, 'join', { currentAccountId: accountId, completedMemberAccountIds: [...completed] });
       const account = await pool.query('SELECT platform_user_id FROM accounts WHERE id=$1', [accountId]);
       const platformUserId = account.rows[0]?.platform_user_id;
-      if (!platformUserId) { errors.push({ step: `join:${accountId}`, code: 'ACCOUNT_NOT_ONLINE' }); continue; }
+      if (!platformUserId) { await recordFailure(job, errors, `join:${accountId}`, 'ACCOUNT_NOT_ONLINE'); continue; }
       const local = await pool.query('SELECT 1 FROM group_members WHERE group_id=$1 AND account_id=$2', [groupId, accountId]);
-      if (local.rowCount) continue;
-      let joined = (await members(gatewayId, job.trace_id)).includes(platformUserId);
-      if (joined) await pool.query("INSERT INTO group_members(group_id,account_id,platform_user_id,role) VALUES($1,$2,$3,'member') ON CONFLICT DO NOTHING", [groupId, accountId, platformUserId]);
-      for (let inviteTry = 0; inviteTry < 2 && !joined; inviteTry++) {
+      if (local.rowCount) { completed.add(accountId); continue; }
+      let accepted = false;
+      let alreadyMember = false;
+      let joinFailed = false;
+      let lastJoinCode = 'JOIN_FAILED';
+      for (let inviteTry = 0; inviteTry < 2 && !accepted; inviteTry++) {
+        await setStep(job, 'invite', { currentAccountId: accountId, inviteAttempts: inviteTry + 1, completedMemberAccountIds: [...completed] } as Partial<JobProgress>);
         const invite = await gateway(gatewayUrl, `/groups/${gatewayId}/invite`, 'POST', undefined, job.trace_id);
-        if (!invite.response.ok) { errors.push({ step: 'invite', code: invite.data.code || 'INVITE_FAILED' }); break; }
-        await sleep(Math.max(0, Number(invite.data.readyAfterMs || 0)));
-        for (let attempt = 0; attempt < 2 && !joined; attempt++) {
+        if (!invite.response.ok) { await recordFailure(job, errors, `invite:${accountId}`, invite.data.code || 'INVITE_FAILED'); break; }
+        await sleep(Math.max(0, Number(invite.data.readyAfterMs || 0)) + 25);
+        for (let attempt = 0; attempt < 2 && !accepted; attempt++) {
+          await setStep(job, 'join', { currentAccountId: accountId, inviteAttempts: inviteTry + 1, completedMemberAccountIds: [...completed] });
           const join = await gateway(gatewayUrl, `/groups/${gatewayId}/join`, 'POST', { accountId, inviteLink: invite.data.inviteLink }, job.trace_id);
-          if (join.response.ok || join.data.code === 'ALREADY_MEMBER') { joined = true; break; }
-          if (join.data.code === 'INVITE_EXPIRED') break;
-          if (join.data.code === 'INVITE_NOT_READY') { await sleep(500); continue; }
-          errors.push({ step: `join:${accountId}`, code: join.data.code || 'JOIN_FAILED' }); break;
+          if (join.response.ok || join.data.code === 'ALREADY_MEMBER') { accepted = true; alreadyMember = join.data.code === 'ALREADY_MEMBER'; break; }
+          if (join.data.code === 'INVITE_EXPIRED') { lastJoinCode = 'INVITE_EXPIRED'; break; }
+          if (join.data.code === 'INVITE_NOT_READY') { lastJoinCode = 'INVITE_NOT_READY'; await sleep(Math.max(25, Number(join.data.readyAfterMs) || 0) + 25); continue; }
+          lastJoinCode = join.data.code || 'JOIN_FAILED';
+          await recordFailure(job, errors, `join:${accountId}`, lastJoinCode); joinFailed = true; break;
         }
+        if (joinFailed) break;
       }
-      if (!joined) { if (!errors.some(error => error.step === `join:${accountId}`)) errors.push({ step: `join:${accountId}`, code: 'JOIN_TIMEOUT' }); continue; }
+      if (!accepted) { if (!errors.some(error => error.step === `join:${accountId}` || error.step === `invite:${accountId}`)) await recordFailure(job, errors, `join:${accountId}`, lastJoinCode); continue; }
+      if (alreadyMember) {
+        // ALREADY_MEMBER does not emit a fresh member_joined event. Confirm the
+        // authoritative Gateway state and repair the local row immediately so
+        // the normal promotion phase can proceed without waiting for a signal
+        // that will never arrive.
+        const remote = await gateway(gatewayUrl, `/groups/${gatewayId}/members`, 'GET', undefined, job.trace_id);
+        if (!remote.response.ok || !Array.isArray(remote.data)) throw new Error('member lookup unavailable');
+        const found = remote.data.find((item: { platformUserId?: string }) => item.platformUserId === platformUserId);
+        if (!found) { await recordFailure(job, errors, `join:${accountId}`, 'ALREADY_MEMBER_NOT_CONFIRMED'); continue; }
+        const role = found.role === 'admin' ? 'admin' : 'member';
+        await pool.query('INSERT INTO group_members(group_id,account_id,platform_user_id,role) VALUES($1,$2,$3,$4) ON CONFLICT(group_id,account_id) DO UPDATE SET platform_user_id=EXCLUDED.platform_user_id', [groupId, accountId, platformUserId, role]);
+        completed.add(accountId);
+        await setStep(job, 'join', { currentAccountId: undefined, completedMemberAccountIds: [...completed] });
+        continue;
+      }
+      await setStep(job, 'await_member_joined', { currentAccountId: accountId, completedMemberAccountIds: [...completed] });
       const deadline = Date.now() + 10000;
+      let eventReceived = false;
       while (Date.now() < deadline) {
         const seen = await pool.query('SELECT 1 FROM group_members WHERE group_id=$1 AND account_id=$2', [groupId, accountId]);
-        if (seen.rowCount) break;
-        const currentMembers = await members(gatewayId, job.trace_id);
-        if (currentMembers.includes(platformUserId)) {
-          await pool.query("INSERT INTO group_members(group_id,account_id,platform_user_id,role) VALUES($1,$2,$3,'member') ON CONFLICT DO NOTHING", [groupId, accountId, platformUserId]);
-          break;
-        }
+        if (seen.rowCount) { eventReceived = true; break; }
         await sleep(200);
       }
-      const seen = await pool.query('SELECT 1 FROM group_members WHERE group_id=$1 AND account_id=$2', [groupId, accountId]);
-      if (!seen.rowCount) errors.push({ step: `join:${accountId}`, code: 'JOIN_TIMEOUT' });
+      if (!eventReceived) await recordFailure(job, errors, `member_joined:${accountId}`, 'MEMBER_EVENT_TIMEOUT');
+      else { completed.add(accountId); await setStep(job, 'join', { currentAccountId: undefined, completedMemberAccountIds: [...completed] }); }
     }
     if (!errors.length) {
       const admin = memberIds[0];
+      await setStep(job, 'promote', { currentAccountId: admin, completedMemberAccountIds: [...completed] });
       const current = await pool.query('SELECT role FROM group_members WHERE group_id=$1 AND account_id=$2', [groupId, admin]);
       while (current.rows[0]?.role !== 'admin' && (job.progress.promoteAttempts || 0) < 2) {
         job.progress.promoteAttempts = (job.progress.promoteAttempts || 0) + 1;
@@ -111,7 +147,7 @@ export function startGroupJobs({ pool, gatewayUrl, publish }: Dependencies): voi
         await sleep(250);
       }
       const checked = await pool.query('SELECT role FROM group_members WHERE group_id=$1 AND account_id=$2', [groupId, admin]);
-      if (checked.rows[0]?.role !== 'admin') errors.push({ step: 'promote', code: 'PROMOTE_FAILED' });
+      if (checked.rows[0]?.role !== 'admin') await recordFailure(job, errors, 'promote', 'PROMOTE_FAILED');
     }
     await finish(job, errors);
   }
@@ -156,7 +192,17 @@ export function startGroupJobs({ pool, gatewayUrl, publish }: Dependencies): voi
           const current = await pool.query<Job>("SELECT * FROM jobs WHERE id=$1 AND status='running'", [job.id]);
           if (!current.rowCount) continue;
           try { if (job.kind === 'create') await create(current.rows[0]); else await leaveAll(current.rows[0]); }
-          catch (error) { console.error(JSON.stringify({ event: 'group_job_retry', jobId: job.id, error: String(error) })); publish('inconsistency', { kind: 'group_job', ref: job.id, message: String(error) }); }
+          catch (error) {
+            const activeJob = current.rows[0];
+            const retryCount = Number(activeJob.progress.retryCount || 0) + 1;
+            const step = activeJob.progress.step || activeJob.kind;
+            const code = error instanceof Error && error.name === 'TimeoutError' ? 'GATEWAY_TIMEOUT' : 'GATEWAY_UNAVAILABLE';
+            activeJob.progress = { ...activeJob.progress, retryCount, lastFailure: { step, code, at: new Date().toISOString() } };
+            if (activeJob.kind === 'create') await saveProgress(activeJob);
+            console.error(JSON.stringify({ event: 'group_job_retry', jobId: job.id, step, retryCount, error: String(error) }));
+            publish('inconsistency', { kind: 'group_job', ref: job.id, message: String(error) });
+            if (retryCount >= 5) await finish(activeJob, [{ step, code }]);
+          }
           break;
         } finally { await lock.query('SELECT pg_advisory_unlock(82945,hashtext($1))', [job.id]); lock.release(); }
       }

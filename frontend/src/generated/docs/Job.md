@@ -8,6 +8,7 @@ Name | Type
 ------------ | -------------
 `id` | string
 `status` | string
+`progress` | { [key: string]: any; }
 `errors` | [Array&lt;JobErrorsInner&gt;](JobErrorsInner.md)
 
 ## Example
@@ -19,6 +20,7 @@ import type { Job } from ''
 const example = {
   "id": null,
   "status": null,
+  "progress": null,
   "errors": null,
 } satisfies Job
 
@@ -34,5 +36,4 @@ console.log(exampleParsed)
 ```
 
 [[Back to top]](#) [[Back to API list]](../README.md#api-endpoints) [[Back to Model list]](../README.md#models) [[Back to README]](../README.md)
-
 

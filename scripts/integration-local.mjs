@@ -114,11 +114,19 @@ try {
   for (const id of ['acc-1', 'acc-2', 'acc-3']) await expectOk(`/api/accounts/${id}/connect`, 'POST');
 
   const { jobId } = await expectOk('/api/groups', 'POST', { creatorAccountId: 'acc-1', memberAccountIds: ['acc-2', 'acc-3'] });
-  await until(() => expectOk(`/api/jobs/${jobId}`), job => job.status === 'finished');
+  const creationJob = await until(() => expectOk(`/api/jobs/${jobId}`), job => ['finished', 'failed'].includes(job.status));
+  assert.equal(creationJob.status, 'finished', `group creation job failed: ${JSON.stringify(creationJob.errors)}`);
+  assert.equal(creationJob.progress.step, 'complete');
+  assert.deepEqual(creationJob.progress.completedMemberAccountIds.sort(), ['acc-2', 'acc-3']);
+  assert.deepEqual(creationJob.errors, []);
   const group = (await expectOk('/api/groups')).find(g => g.members?.some(m => m.accountId === 'acc-3') && g.status === 'active');
   assert(group, 'created group appears in list');
   const detail = await expectOk(`/api/groups/${group.id}`);
+  assert.equal(detail.members.find(m => m.accountId === 'acc-1').role, 'creator');
   assert.equal(detail.members.find(m => m.accountId === 'acc-2').role, 'admin');
+  assert.equal(detail.members.find(m => m.accountId === 'acc-3').role, 'member');
+  const gatewayGroupMembers = await expectOk(`/groups/${group.gatewayGroupId}/members`, 'GET', undefined, gateway);
+  assert.equal(gatewayGroupMembers.find(member => member.platformUserId === detail.members.find(m => m.accountId === 'acc-2').platformUserId).role, 'admin');
   await expectOk('/api/accounts/acc-5/connect', 'POST');
   const competingTransitions = await Promise.all([
     request('/api/accounts/acc-5/transition', 'POST', { to: 'disconnected', expectedFrom: 'online' }),

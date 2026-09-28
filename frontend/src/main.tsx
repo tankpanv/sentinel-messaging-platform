@@ -8,6 +8,7 @@ import { useEvents } from './hooks/useEvents';
 import { GroupCreation } from './components/GroupCreation';
 import { SequencePanel } from './components/SequencePanel';
 import { MessageServiceLive } from './components/MessageServiceLive';
+import { MessageTimeline } from './components/MessageTimeline';
 import { Activity, Bot, Check, ChevronRight, Layers3, LogOut, MessageSquareText, RefreshCw, Shield, Users, Zap } from 'lucide-react';
 import './style.css';
 
@@ -175,7 +176,7 @@ function App() {
   const userLabel = canWrite ? '管理员' : '只读成员';
   const navigate = (id: string) => { if (window.location.hash.slice(1) !== id) window.location.hash = id; else setRoute(parseRoute()); };
   const navLink = (id: string, icon: React.ReactNode, label: string) => <a className={activeNav === id ? 'active' : ''} href={`#${id}`}>{icon}<span>{label}</span></a>;
-  const pageTitle = activeNav === 'accounts' ? '账号管理' : activeNav === 'create-group' ? '创建群组' : activeNav === 'groups' ? '群组与消息' : activeNav === 'message-service' ? 'Gateway 消息服务' : activeNav === 'sequence' ? '自动化序列' : '运营概览';
+  const pageTitle = activeNav === 'accounts' ? '账号管理' : activeNav === 'create-group' ? '创建群组' : activeNav === 'groups' || activeNav === 'timeline' ? '群组与消息' : activeNav === 'message-service' ? 'Gateway 消息服务' : activeNav === 'sequence' ? '自动化序列' : '运营概览';
   return <div className="app-shell">
     <aside className="sidebar"><div className="brand-lockup"><div className="brand-mark"><Shield size={19}/></div><div><div className="brand">SENTINEL</div><div className="brand-caption">Messaging operations</div></div></div><div className="nav-label">工作区</div><nav className="side-nav">{navLink('overview', <Activity/>, '运营概览')}{navLink('accounts', <Users/>, '账号管理')}{navLink('create-group', <MessageSquareText/>, '创建群组')}{navLink('groups', <Layers3/>, '群组与消息')}{navLink('message-service', <MessageSquareText/>, 'Gateway 消息服务')}{navLink('sequence', <Zap/>, '自动化序列')}</nav><div className="sidebar-footer"><span className="service-indicator">服务运行正常</span></div></aside>
     <div className="workspace"><div className="topbar"><div className="breadcrumb"><span>工作区</span><ChevronRight size={14}/><strong>{pageTitle}</strong></div><nav className="top-nav" aria-label="主导航"><a className={activeNav === 'overview' ? 'active' : ''} href="#overview">Home</a><a className={activeNav === 'message-service' ? 'active' : ''} href="#message-service">Gateway 消息服务</a></nav><div className="profile"><div className="avatar">{canWrite ? 'A' : 'V'}</div><div className="profile-copy"><strong>{userLabel}</strong><small>{canWrite ? '完整访问权限' : '只读访问权限'}</small></div><Button variant="ghost" size="icon-sm" aria-label="退出登录" title="退出登录" onClick={async () => { try { await client.logout(); } finally { clearSession(); redraw(x => x + 1); } }}><LogOut size={16}/></Button></div></div>
@@ -184,7 +185,8 @@ function App() {
         {activeNav === 'accounts' && <Accounts canWrite={canWrite} onChanged={() => setAccountsVersion(value => value + 1)} onOpenGroup={id => { setFocusGroupId(id); navigate('groups'); }} />}
         {activeNav === 'create-group' && canWrite && <section id="create-group"><GroupCreation refreshKey={accountsVersion} onCreated={async () => { setGroups(await client.listGroups()); navigate('groups'); }} /></section>}
         {activeNav === 'create-group' && !canWrite && <section className="empty-state"><strong>只读账号无法创建群组</strong></section>}
-        {activeNav === 'groups' && <GroupsPage groups={groups} canWrite={canWrite} focusGroupId={focusGroupId} onRefresh={async () => setGroups(await client.listGroups())} onOpen={id => { setSelected(id); navigate('message-service'); }} />}
+        {activeNav === 'groups' && <GroupsPage groups={groups} canWrite={canWrite} focusGroupId={focusGroupId} onRefresh={async () => setGroups(await client.listGroups())} onOpen={id => { setSelected(id); navigate('timeline'); }} />}
+        {activeNav === 'timeline' && selected && <MessageTimeline groupId={selected} groupName={displayGroupId(groups.find(group => group.id === selected) || { id: selected, gatewayGroupId: selected })} onBack={() => navigate('groups')} />}
         {activeNav === 'message-service' && <MessageServiceLive preferredGatewayGroupId={groups.find(group => group.id === selected)?.gatewayGroupId} canWrite={canWrite} />}
         {activeNav === 'sequence' && <SequencePanel route={route} groupId={selected || ''} groups={groups} canWrite={canWrite} onNavigate={navigate} />}
       </main></div></div>;

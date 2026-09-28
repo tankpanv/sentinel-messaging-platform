@@ -2,7 +2,7 @@ import type { Pool, PoolClient } from 'pg';
 
 export type AccountStatus = 'idle' | 'online' | 'rate_limited' | 'disconnected' | 'suspended' | 'session_expired';
 export const transitions: Record<AccountStatus, readonly AccountStatus[]> = {
-  idle: ['online', 'disconnected', 'suspended', 'session_expired'],
+  idle: ['disconnected', 'suspended', 'session_expired'],
   online: ['idle', 'rate_limited', 'disconnected', 'suspended', 'session_expired'],
   rate_limited: ['online', 'disconnected', 'suspended', 'session_expired'],
   disconnected: ['idle', 'online', 'suspended', 'session_expired'],

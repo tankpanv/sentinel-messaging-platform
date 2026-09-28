@@ -146,7 +146,10 @@ export function startOutbox(pool: Pool, gatewayUrl: string, publish: (type: stri
     );
     for (const message of rows.rows) {
       try {
-        const response = await fetch(`${gatewayUrl}/groups/${message.gateway_group_id}/messages/by-client-id/${message.client_msg_id}`, { headers: message.trace_id ? { 'x-trace-id': message.trace_id } : undefined, signal: AbortSignal.timeout(5000) });
+        // Keep the lookup short so an unavailable endpoint cannot delay recovery
+        // for five seconds after it comes back. Unknown remains unchanged on any
+        // lookup error, and the next outbox tick retries it.
+        const response = await fetch(`${gatewayUrl}/groups/${message.gateway_group_id}/messages/by-client-id/${message.client_msg_id}`, { headers: message.trace_id ? { 'x-trace-id': message.trace_id } : undefined, signal: AbortSignal.timeout(1000) });
         if (response.ok) {
           const landed = await response.json() as { msgId: string; sentAt: string };
           await pool.query("UPDATE messages SET delivery_status='sent',msg_id=$2,sent_at=$3,fail_code=NULL WHERE id=$1 AND delivery_status='unknown'", [message.id, landed.msgId, landed.sentAt]);

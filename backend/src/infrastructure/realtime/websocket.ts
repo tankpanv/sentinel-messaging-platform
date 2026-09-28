@@ -18,8 +18,13 @@ function broadcast(type:string,payload:any){
 }
 wss.on('connection',socket=>{
   let authenticated=false;
+  let authenticating=false;
   socket.on('message',async(data:any)=>{
-    if(authenticated)return;
+    if(authenticated||authenticating)return;
+    // Mark the handshake in progress before the first await. Otherwise two auth
+    // frames in the same connection can race the session lookup and replay the
+    // same sequence twice to one socket.
+    authenticating=true;
     try{
       const message=JSON.parse(String(data));
       if(message.type!=='auth'||!Number.isSafeInteger(Number(message.sinceSeq||0))||Number(message.sinceSeq||0)<0)throw Error('AUTH_REQUIRED');

@@ -287,6 +287,9 @@ components:
           type: string
         status:
           type: string
+        progress:
+          type: object
+          additionalProperties: true
         errors:
           type: array
           items:

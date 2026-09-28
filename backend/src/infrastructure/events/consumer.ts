@@ -98,7 +98,7 @@ async function applyEvent(client: PoolClient, event: GatewayEvent): Promise<{ no
       const oldStatus = current.rows[0].status;
       const status = event.status;
       if (!isTerminal(oldStatus) && status !== oldStatus && transitions[oldStatus as AccountStatus]?.includes(status as AccountStatus)) {
-        await client.query('UPDATE accounts SET status=$2,version=version+1 WHERE id=$1', [event.accountId, status]);
+        await client.query('UPDATE accounts SET status=$2,rate_limited_until=CASE WHEN $2=\'rate_limited\' THEN rate_limited_until ELSE NULL END,version=version+1 WHERE id=$1', [event.accountId, status]);
         notifications.push({ type: 'account_status_changed', payload: { accountId: event.accountId, from: oldStatus, to: status } });
         if (status === 'suspended' || status === 'session_expired') {
           await applyTerminalEffects(client, String(event.accountId));
