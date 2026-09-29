@@ -26,7 +26,7 @@ function connect(): void {
     try { frame = JSON.parse(event.data); } catch { return; }
     if (frame.type === 'auth') {
       if (frame.success) { retryMs = 250; return; }
-      renewal ||= renewSession().finally(() => { renewal = null; });
+      renewal ||= renewSession().catch(() => null).finally(() => { renewal = null; });
       active.close();
       return;
     }
@@ -37,7 +37,7 @@ function connect(): void {
   };
   active.onclose = () => {
     if (socket === active) socket = null;
-    if (renewal) void renewal.then(token => { if (token) scheduleReconnect(); });
+    if (renewal) void renewal.then(token => { if (token || currentSession()) scheduleReconnect(); });
     else scheduleReconnect();
   };
   active.onerror = () => active.close();

@@ -10,7 +10,7 @@ const base='http://127.0.0.1:28491';let server;
 async function req(path,method='GET',body,token){const r=await fetch(base+path,{method,headers:{'content-type':'application/json',...(token?{authorization:`Bearer ${token}`}:{})},body:body===undefined?undefined:JSON.stringify(body)});return {status:r.status,data:await r.json()};}
 async function migrate(){const result=await launch(['--import','./backend/node_modules/tsx/dist/loader.mjs','backend/src/infrastructure/db/migrate.ts']).done;assert.equal(result.code,0,result.output);}
 const status=['idle','online','rate_limited','disconnected','suspended','session_expired'];
-const edges={idle:['disconnected','suspended','session_expired'],online:['idle','rate_limited','disconnected','suspended','session_expired'],rate_limited:['online','disconnected','suspended','session_expired'],disconnected:['idle','online','suspended','session_expired'],suspended:[],session_expired:[]};
+const edges={idle:['online','suspended','session_expired'],online:['idle','rate_limited','disconnected','suspended','session_expired'],rate_limited:['online','disconnected','suspended','session_expired'],disconnected:['idle','online','suspended','session_expired'],suspended:[],session_expired:[]};
 try{
  await pool.query(`CREATE SCHEMA ${schema}`);
  await pool.end();pool=new pg.Pool({connectionString:process.env.DATABASE_URL,options:`-c search_path=${schema},public`});
@@ -58,5 +58,5 @@ try{
  const steps=(await pool.query('SELECT steps FROM sequence_runs WHERE id=$1',[run])).rows[0].steps;assert.equal(steps[0].status,'skipped');assert.ok(steps[0].sentAt);
  const duplicate=await req(`/api/accounts/${fixture}/transition`,'POST',{expectedFrom:'suspended',to:'suspended'},token);assert.equal(duplicate.status,200);
  const stillTerminal=await pool.query('SELECT status FROM accounts WHERE id=$1',[fixture]);assert.equal(stillTerminal.rows[0].status,'suspended');
- console.log(JSON.stringify({ok:true,environment:'isolated PostgreSQL schema and Backend; simulated/unavailable Gateway (127.0.0.1:1)',agent:'not invoked',checks:['all 36 state pairs','idle to disconnected and idle to online rejected','self transitions rejected','terminal states have no exits','CAS race returns exactly one success and one conflict','expired persisted rate limit recovers after Backend restart','terminal effects atomic in one DB transaction','duplicate terminal transition ignored'],statePairs:36}));
+ console.log(JSON.stringify({ok:true,environment:'isolated PostgreSQL schema and Backend; simulated/unavailable Gateway (127.0.0.1:1)',agent:'not invoked',checks:['all 36 state pairs','idle to online allowed; idle to disconnected rejected','self transitions rejected','terminal states have no exits','CAS race returns exactly one success and one conflict','expired persisted rate limit recovers after Backend restart','terminal effects atomic in one DB transaction','duplicate terminal transition ignored'],statePairs:36}));
 }finally{await stop(server);await pool.query(`DROP SCHEMA ${schema} CASCADE`);await pool.end()}

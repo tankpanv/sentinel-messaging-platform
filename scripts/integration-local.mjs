@@ -89,10 +89,17 @@ try {
 
   const login = await expectOk('/api/auth/login', 'POST', { username: 'admin', password: 'admin' }); token = login.accessToken;
   const secondLogin = await request('/api/auth/login', 'POST', { username: 'admin', password: 'admin' });
-  const oldCookie = secondLogin.response.headers.get('set-cookie')?.split(';')[0];
+  assert.deepEqual(Object.keys(secondLogin.data).sort(), ['accessToken'], 'login response body must not expose a refresh token');
+  const originalCookie = secondLogin.response.headers.get('set-cookie') || '';
+  assert.match(originalCookie, /HttpOnly/i, 'refresh cookie is HttpOnly');
+  const oldCookie = originalCookie.split(';')[0];
   assert(oldCookie);
   const rotated = await request('/api/auth/refresh', 'POST', undefined, base, { headers: { cookie: oldCookie } });
   assert.equal(rotated.response.status, 200);
+  assert.deepEqual(Object.keys(rotated.data).sort(), ['accessToken'], 'refresh response body must contain only the access token');
+  const rotatedCookie = rotated.response.headers.get('set-cookie') || '';
+  assert.match(rotatedCookie, /HttpOnly/i, 'rotated refresh cookie is HttpOnly');
+  assert.notEqual(rotatedCookie.split(';')[0], oldCookie, 'refresh token rotates after use');
   const replayed = await request('/api/auth/refresh', 'POST', undefined, base, { headers: { cookie: oldCookie } });
   assert.equal(replayed.response.status, 401);
   const revokedAccess = await request('/api/accounts', 'GET', undefined, base, { headers: { authorization: `Bearer ${rotated.data.accessToken}` } });
